@@ -1,0 +1,103 @@
+// Package profiles stores the saved connections shown on the home tab.
+package profiles
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+// Profile is one saved connection. Password may be empty. It is stored in clear
+// text in the file, which is only readable by the current user.
+type Profile struct {
+	Name     string `json:"name"`
+	Addr     string `json:"addr"`
+	Password string `json:"password,omitempty"`
+}
+
+// List is the ordered set of saved profiles, persisted to a JSON file.
+type List struct {
+	path  string
+	Items []Profile
+}
+
+// Load reads path, or starts empty if it does not exist.
+func Load(path string) (*List, error) {
+	l := &List{path: path}
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return l, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(b, &l.Items); err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+func (l *List) save() error {
+	b, err := json.MarshalIndent(l.Items, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(l.path, b, 0o600)
+}
+
+func (l *List) index(name string) int {
+	for i, p := range l.Items {
+		if p.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// Find returns the profile called name.
+func (l *List) Find(name string) (Profile, bool) {
+	if i := l.index(name); i >= 0 {
+		return l.Items[i], true
+	}
+	return Profile{}, false
+}
+
+// Upsert replaces the profile with the same name, or appends a new one.
+func (l *List) Upsert(p Profile) error {
+	if i := l.index(p.Name); i >= 0 {
+		l.Items[i] = p
+	} else {
+		l.Items = append(l.Items, p)
+	}
+	return l.save()
+}
+
+// Delete removes the profile at index i.
+func (l *List) Delete(i int) error {
+	if i < 0 || i >= len(l.Items) {
+		return nil
+	}
+	l.Items = append(l.Items[:i], l.Items[i+1:]...)
+	return l.save()
+}
+
+// Rename renames the profile called old and returns the name actually used: if
+// another profile already has the name, " (2)", " (3)", ... is appended. Renaming
+// a profile that does not exist, or to an empty name, changes nothing.
+func (l *List) Rename(old, name string) (string, error) {
+	i := l.index(old)
+	if i < 0 || name == "" || name == old {
+		return old, nil
+	}
+	final := name
+	for n := 2; l.index(final) >= 0; n++ {
+		final = fmt.Sprintf("%s (%d)", name, n)
+	}
+	l.Items[i].Name = final
+	return final, l.save()
+}
