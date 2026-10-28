@@ -83,6 +83,8 @@ var (
 	waitForSingleObject = kernel32.NewProc("WaitForSingleObject")
 	releaseSemaphore    = kernel32.NewProc("ReleaseSemaphore")
 	closeHandle         = kernel32.NewProc("CloseHandle")
+	setCursorPos        = user32.NewProc("SetCursorPos")
+	getCursorPos        = user32.NewProc("GetCursorPos")
 	createSolidBrush    = gdi32.NewProc("CreateSolidBrush")
 	deleteObject        = gdi32.NewProc("DeleteObject")
 )
@@ -305,6 +307,25 @@ func (w *Window) Close() {
 	unregisterClass.Call(uintptr(unsafe.Pointer(w.class)), w.inst)
 	deleteObject.Call(w.brush)
 	runtime.UnlockOSThread()
+}
+
+// IsWine reports whether this is Wine rather than Windows. Wine is good enough to
+// debug a test with, but its input and capture details differ, so a test that
+// checks them exactly can relax there.
+func IsWine() bool {
+	return syscall.NewLazyDLL("ntdll.dll").NewProc("wine_get_version").Find() == nil
+}
+
+// SetCursorPos moves the pointer to a screen pixel.
+func SetCursorPos(x, y int) {
+	setCursorPos.Call(uintptr(x), uintptr(y))
+}
+
+// CursorPos returns the pointer's screen position.
+func CursorPos() (x, y int) {
+	var p [2]int32
+	getCursorPos.Call(uintptr(unsafe.Pointer(&p[0])))
+	return int(p[0]), int(p[1])
 }
 
 // ScreenSize is the primary screen in physical pixels.

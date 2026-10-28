@@ -10,11 +10,11 @@
 | 项 | 状态 | 实际情况 | 位置 |
 |---|---|---|---|
 | 采集方式 | 已实现 | GDI `BitBlt`（`SRCCOPY\|CAPTUREBLT`）到 32bpp 自上而下 DIB。**没有** DXGI Desktop Duplication / WGC | `internal/capture/capture_windows.go:36,103-104` |
-| 显示器范围 | 部分 | 只采主屏：尺寸取 `GetSystemMetrics(SM_CXSCREEN/CYSCREEN)`，原点固定 (0,0)；无 `EnumDisplayMonitors` | `capture_windows.go:33,65` |
-| 分辨率/显示器变化 | 未实现 | 尺寸在启动时固定，主机从不下发尺寸变化；需重启主机 | `host.go`（`Serve` 只读一次 `src.Size()`） |
-| DPI | 部分 | 无 manifest；`NewScreen` 调 `SetProcessDPIAware`（system-aware，非 per-monitor）是副作用，依赖它先于 Ebiten 初始化。`shcore` 声明后被丢弃（死代码） | `capture_windows.go:18,22,29` |
-| 鼠标指针 | 未实现 | `BitBlt` 不含指针，代码里没有 `GetCursorInfo`/`DrawIconEx`，协议也没有指针消息；查看器只显示本地系统指针 | — |
-| 采集失败恢复 | 未实现 | `Grab` 出错即结束会话，不重建 `Screen`（锁屏/UAC/分辨率变化后每个会话都会死） | `internal/remote/host.go:160` |
+| 显示器范围 | 已实现（2026-10-28；此前只采主屏） | `-display <primary\|序号\|设备名如 \\.\DISPLAY2>` 或设置 `display` 选择要共享的显示器；采集用该显示器在虚拟桌面里的矩形做 `BitBlt`，所以左侧 / 上方（坐标为负）的副屏也行。注入侧对非主屏用 `MOUSEEVENTF_VIRTUALDESK` + 显示器原点；主屏沿用原来的映射。**一次只共享一块显示器**，没有会话内切换；多屏同时共享、显示器选择界面都没有 | `internal/capture`（`Displays`、`Open`、`SelectDisplay`）、`internal/inject`（`NewDisplay`）、`cmd/go-nx` |
+| 分辨率/显示器变化 | 已实现（2026-10-28；此前尺寸启动时固定） | 主机每秒让 `Screen.Refresh` 重新枚举显示器；尺寸或位置变了就重建采集面，下发新尺寸的画面（第一个更新是完整的），并通过 `OnSourceChanged` 重设注入器的坐标映射。查看器本来就按帧头的尺寸重建缓冲。显示器消失则按"抓屏失败"处理。真实显示器热插拔 / 改分辨率**未在实机上验证** | `internal/remote/host.go`、`internal/capture`、`cmd/go-nx/host_windows.go` |
+| DPI | 已实现（2026-10-28；此前是 system-aware 的副作用） | 进程在 `main` 最开头设为 **per-monitor v2**（`capture.EnableDPIAwareness`，退路 `SetProcessDPIAware`），采集尺寸和注入坐标都按物理像素。这也让 Ebiten 回到它自己的默认行为（以前是被 `NewScreen` 抢先设成 system-aware）。混合 DPI 多屏 / 125%–200% 缩放**未在实机上验证**（ACCEPTANCE H7、H8） | `internal/capture`、`cmd/go-nx/main_windows.go` |
+| 鼠标指针 | 已实现，按需（2026-10-28；此前未实现） | `BitBlt` 不含指针，所以 `Screen.SetCursorVisible(true)` 时用 `GetCursorInfo` + `GetIconInfo` + `DrawIconEx` 把它画进抓到的画面（热点和显示器原点已计入，`internal/cursor` 有几何测试）。**默认关**：只对在 v1 Hello 里带 `CapCursor` 的查看器打开（`DialOptions.WantCursor`，给没有自己指针的手机端用），因为自带指针的桌面查看器会看到两个。主机在 Welcome 里声明 `CapCursor` | `internal/capture`、`internal/remote/host.go`、`internal/cursor` |
+| 采集失败恢复 | 已实现（2026-10-28；此前 `Grab` 出错就结束会话） | 能刷新的源（`Refresher`）抓屏失败时会话保留，主机每个 tick 重试 `Refresh` 并上报一次 `capture paused`；恢复后上报 `capture resumed`，查看器期间保留最后一帧；超过 `GrabRetryFor`（默认 60 s）仍不恢复才结束会话。不能刷新的源仍是失败即结束。锁屏 / UAC 的真实行为**未在实机上验证**（ACCEPTANCE H9） | `internal/remote/host.go`、`internal/capture` |
 | 帧率 | 部分 | 固定帧率，默认 10（`-fps`）；Ack 驱动的停等流控 + 过期帧取消，不做质量自适应 | `cmd/go-nx/main_windows.go:99`、`host.go:148` |
 
 ## 2. tile 与编码

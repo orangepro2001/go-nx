@@ -24,6 +24,21 @@ type Source interface {
 	Grab(dst *tile.Frame) error
 }
 
+// Refresher is implemented by a Source whose surface can go stale or change size:
+// a monitor whose resolution changes, or a desktop that is briefly unavailable
+// (lock screen, UAC prompt, a display being reconfigured). Refresh rebuilds what
+// it needs and reports whether the size or position changed.
+type Refresher interface {
+	Refresh() (changed bool, err error)
+}
+
+// CursorSetter is implemented by a Source that can draw the system pointer into
+// the pictures it grabs. Serve turns it on for a viewer that asks for it and off
+// otherwise, because a viewer that shows its own pointer would show two.
+type CursorSetter interface {
+	SetCursorVisible(on bool)
+}
+
 // Injector performs user input on the host.
 type Injector interface {
 	Inject(in proto.Input) error
@@ -79,6 +94,17 @@ type Options struct {
 	// OnPeer, if set, is called once the viewer has been admitted, with what it
 	// introduced itself as (the name is empty for a v0 viewer).
 	OnPeer func(PeerInfo)
+
+	// RefreshEvery is how often a Refresher source is asked whether the screen
+	// changed; default 1 s.
+	RefreshEvery time.Duration
+	// GrabRetryFor is how long a Refresher source may keep failing to grab before
+	// the session is ended; default 60 s. A source without Refresh ends the
+	// session at the first failure.
+	GrabRetryFor time.Duration
+	// OnSourceChanged, if set, is called with the new size when a Refresher source
+	// reports that its geometry changed, so the caller can retarget the injector.
+	OnSourceChanged func(w, h int)
 }
 
 // PeerInfo is what a viewer told the host about itself.
@@ -125,6 +151,12 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 	}
 	if opt.AckTimeout <= 0 {
 		opt.AckTimeout = time.Second
+	}
+	if opt.RefreshEvery <= 0 {
+		opt.RefreshEvery = time.Second
+	}
+	if opt.GrabRetryFor <= 0 {
+		opt.GrabRetryFor = time.Minute
 	}
 	// Hold a pre-authentication slot until the host has decided about this viewer.
 	leaveGate := func() {}
@@ -210,6 +242,13 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 		}()
 	}
 
+	refresher, _ := src.(Refresher)
+	if refresher != nil {
+		refresher.Refresh() // the screen may have changed since the host started
+	}
+	if cs, ok := src.(CursorSetter); ok {
+		cs.SetCursorVisible(cd.version() >= proto.Version1 && hello.Caps.Has(proto.CapCursor))
+	}
 	w, h := src.Size()
 	if !proto.ValidFrameSize(w, h) {
 		// A viewer would refuse the frames, so say so here instead of streaming them.
@@ -220,7 +259,7 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 		opt.OnPeer(PeerInfo{Version: cd.version(), Name: hello.Name, Caps: hello.Caps})
 	}
 	if err := cd.writeWelcome(ctrl, proto.WelcomeV1{
-		Version: proto.Version1, Caps: hostCaps(inj, opt), W: uint16(w), H: uint16(h), Name: opt.HostName,
+		Version: proto.Version1, Caps: hostCaps(inj, src, opt), W: uint16(w), H: uint16(h), Name: opt.HostName,
 	}); err != nil {
 		return err
 	}
@@ -235,6 +274,30 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 	var seq uint32
 	var fl *flight
 
+	// retarget follows a change in the source: a new frame size starts a new
+	// picture (the first update after it is complete), and the caller learns of it.
+	retarget := func() error {
+		nw, nh := src.Size()
+		if !proto.ValidFrameSize(nw, nh) {
+			return fmt.Errorf("screen %dx%d is outside what the protocol carries", nw, nh)
+		}
+		if nw != w || nh != h {
+			w, h = nw, nh
+			cur = tile.NewFrame(w, h)
+			diff = tile.Differ{}
+			clear(pending)
+			if fl != nil {
+				fl.st.CancelWrite(0) // a picture of the old size is no use
+				fl = nil
+			}
+		}
+		if opt.OnSourceChanged != nil {
+			opt.OnSourceChanged(w, h)
+		}
+		return nil
+	}
+
+	var lastRefresh, grabFailedSince time.Time
 	tick := time.NewTicker(time.Second / time.Duration(opt.FPS))
 	defer tick.Stop()
 	for {
@@ -247,8 +310,42 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 			return ctx.Err()
 		case <-tick.C:
 		}
+		if refresher != nil && time.Since(lastRefresh) >= opt.RefreshEvery {
+			lastRefresh = time.Now()
+			if changed, err := refresher.Refresh(); err == nil && changed {
+				if err := retarget(); err != nil {
+					return err
+				}
+			}
+		}
 		if err := src.Grab(cur); err != nil {
-			return err
+			if refresher == nil {
+				return err
+			}
+			// The desktop is unavailable for now. Keep the session, tell the caller
+			// once, and keep trying to get it back for a while: the viewer keeps its
+			// last picture meanwhile.
+			if grabFailedSince.IsZero() {
+				grabFailedSince = time.Now()
+				if opt.OnError != nil {
+					opt.OnError(fmt.Errorf("capture paused: %w", err))
+				}
+			}
+			if time.Since(grabFailedSince) > opt.GrabRetryFor {
+				return fmt.Errorf("capture did not recover within %v: %w", opt.GrabRetryFor, err)
+			}
+			if changed, rerr := refresher.Refresh(); rerr == nil && changed {
+				if err := retarget(); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		if !grabFailedSince.IsZero() {
+			grabFailedSince = time.Time{}
+			if opt.OnError != nil {
+				opt.OnError(errors.New("capture resumed"))
+			}
 		}
 		for _, i := range diff.Diff(cur) {
 			pending[i] = struct{}{}
@@ -340,10 +437,16 @@ func runOp(ctrl *quic.Stream, cd codec, dd *proto.Dedup, opID uint64, run func()
 
 // hostCaps is what this host tells a v1 viewer it can do: what the injector is
 // able to do, plus whatever the caller adds.
-func hostCaps(inj Injector, opt Options) proto.Caps {
+func hostCaps(inj Injector, src Source, opt Options) proto.Caps {
 	caps := proto.CapWheelH | opt.Caps
 	if _, ok := inj.(TextInjector); ok {
 		caps |= proto.CapText
+	}
+	if _, ok := src.(Refresher); ok {
+		caps |= proto.CapResize
+	}
+	if _, ok := src.(CursorSetter); ok {
+		caps |= proto.CapCursor
 	}
 	return caps
 }

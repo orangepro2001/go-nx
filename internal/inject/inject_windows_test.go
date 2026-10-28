@@ -243,3 +243,89 @@ func TestHorizontalWheelIsDelivered(t *testing.T) {
 		t.Errorf("vertical wheel deltas = %v, want %v", got, want)
 	}
 }
+
+// The model in abs.go (Windows scales the number back with floor(abs*span/65536))
+// is checked here against Windows itself, for every column and every row of the
+// screen, not a sample. Wine scales differently, so there it only has to be close.
+func TestEveryPixelIsLandedOnExactly(t *testing.T) {
+	wintest.Skip(t)
+	w, h := screenSize(t)
+	j := New(w, h)
+	relaxed := wintest.IsWine()
+	misses := 0
+	check := func(x, y int) {
+		if err := j.Inject(proto.Input{Kind: proto.KindMouseMove, X: int32(x), Y: int32(y)}); err != nil {
+			t.Fatal(err)
+		}
+		gx, gy := wintest.CursorPos()
+		if gx == x && gy == y {
+			return
+		}
+		misses++
+		if relaxed && abs(gx-x) <= 1 && abs(gy-y) <= 1 {
+			return
+		}
+		if misses <= 5 {
+			t.Errorf("asked for %d,%d, the pointer is at %d,%d", x, y, gx, gy)
+		}
+	}
+	for x := 0; x < w; x++ {
+		check(x, h/2)
+	}
+	for y := 0; y < h; y++ {
+		check(w/2, y)
+	}
+	t.Logf("%dx%d screen: %d of %d positions missed", w, h, misses, w+h)
+	if misses > 0 && !relaxed {
+		t.Errorf("%d positions were not landed on exactly", misses)
+	}
+}
+
+// Addressing the whole virtual desktop must put the pointer on the same pixels as
+// addressing the primary monitor does, when the two coincide (one monitor).
+func TestVirtualDesktopMappingMatchesOnASingleMonitor(t *testing.T) {
+	wintest.Skip(t)
+	w, h := screenSize(t)
+	j := NewDisplay(w, h, 0, 0, 0, 0, w, h)
+	relaxed := wintest.IsWine()
+	for x := 0; x < w; x += 3 {
+		y := (x * 7) % h
+		if err := j.Inject(proto.Input{Kind: proto.KindMouseMove, X: int32(x), Y: int32(y)}); err != nil {
+			t.Fatal(err)
+		}
+		gx, gy := wintest.CursorPos()
+		if (gx != x || gy != y) && !(relaxed && abs(gx-x) <= 1 && abs(gy-y) <= 1) {
+			t.Fatalf("virtual desktop mapping: asked for %d,%d, the pointer is at %d,%d", x, y, gx, gy)
+		}
+	}
+}
+
+// Letting go of a button the way the host does when it cleans up after a viewer:
+// without moving the pointer first.
+func TestNoMoveActsWhereThePointerIs(t *testing.T) {
+	wintest.Skip(t)
+	w, h := screenSize(t)
+	win := wintest.New(t, wintest.Options{X: 0, Y: 0, W: 400, H: 300, R: 30, G: 30, B: 30})
+	defer win.Close()
+	win.Focus(t)
+	j := New(w, h)
+	if err := j.Inject(proto.Input{Kind: proto.KindMouseMove, X: 111, Y: 222}); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Inject(proto.Input{Kind: proto.KindMouseDown, X: 111, Y: 222, Arg: 0}); err != nil {
+		t.Fatal(err)
+	}
+	// Somebody else moves the pointer, then the host lets go.
+	wintest.SetCursorPos(250, 150)
+	win.Pump(100 * time.Millisecond)
+	if err := j.Inject(proto.Input{Kind: proto.KindMouseUp, X: proto.NoMove, Y: proto.NoMove, Arg: 0}); err != nil {
+		t.Fatal(err)
+	}
+	win.Pump(100 * time.Millisecond)
+	if x, y := wintest.CursorPos(); abs(x-250) > 1 || abs(y-150) > 1 {
+		t.Errorf("the pointer was dragged to %d,%d by a release that said not to move it (it was at 250,150)", x, y)
+	}
+	if down(vkLButton) {
+		t.Error("the left button is still down")
+	}
+}

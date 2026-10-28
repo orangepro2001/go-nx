@@ -45,6 +45,13 @@ const (
 	KindWheelH    byte = 7 // arg: horizontal delta in 1/120 notches (positive is right)
 )
 
+// NoMove, as both X and Y of a mouse button or wheel Input, means "act where the
+// pointer is now": the host does not move it first. A host uses it when it lets go
+// of buttons a viewer left pressed, so that cleaning up does not drag the pointer
+// to where the button went down. A viewer's own events always carry real
+// coordinates.
+const NoMove int32 = -1 << 31
+
 // Receipt statuses.
 const (
 	StatusExecuted byte = 1

@@ -27,6 +27,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
+	"github.com/orangepro2001/go-nx/internal/capture"
 	"github.com/orangepro2001/go-nx/internal/logging"
 	"github.com/orangepro2001/go-nx/internal/profiles"
 	"github.com/orangepro2001/go-nx/internal/remote"
@@ -99,9 +100,14 @@ func configDir() string {
 }
 
 func main() {
+	// Before any window exists: the first DPI awareness that sticks decides, and the
+	// capture and the injector both count in physical pixels.
+	capture.EnableDPIAwareness()
 	connect := flag.String("connect", "", "prefill the address to connect to")
 	port := flag.Int("port", 7000, "UDP port to host on")
 	listen := flag.String("listen", "", "restrict hosting to one local IP (optionally IP:port), e.g. 192.168.1.5; default is every interface")
+	display := flag.String("display", "", `monitor to share: "primary", an index, or a device name such as \\.\DISPLAY2 (default: the "display" setting, else primary)`)
+	layered := flag.Bool("layered", true, "include layered windows (tooltips, menus) in the capture; false is an experiment for a host whose own pointer flickers")
 	fps := flag.Int("fps", 10, "capture frames per second when hosting")
 	hidden := flag.Bool("hidden", false, "start in the tray without showing the window")
 	updateURL := flag.String("update-url", update.BaseURL, "release server to look for updates on")
@@ -180,7 +186,7 @@ func main() {
 	mark("identity, settings and saved connections loaded")
 
 	a := &app{
-		host:     startHost(*listen, *port, *fps, id, trusted, settings),
+		host:     startHost(*listen, *port, *fps, *display, *layered, id, trusted, settings),
 		id:       id,
 		hosts:    hosts,
 		profiles: saved,

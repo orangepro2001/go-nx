@@ -163,7 +163,7 @@ func (h *hostState) tooltip() string {
 //
 // listen restricts it to one local IP (see remote.ParseListen); empty means every
 // interface on port. The addresses the home tab shows are the ones that can reach it.
-func startHost(listen string, port, fps int, id tls.Certificate, trusted, settings *trust.Store) *hostState {
+func startHost(listen string, port, fps int, display string, layered bool, id tls.Certificate, trusted, settings *trust.Store) *hostState {
 	h := &hostState{
 		policy: trust.NewPolicy(trusted), settings: settings,
 		ID: trust.Fingerprint(id.Certificate[0])[:16],
@@ -183,12 +183,17 @@ func startHost(listen string, port, fps int, id tls.Certificate, trusted, settin
 	h.policy.SetPassword(h.password())
 	h.policy.SetRequireAuth(h.requireAuth())
 	t0 := time.Now()
-	scr, err := capture.NewScreen()
+	if display == "" {
+		display, _ = h.settings.Get("display")
+	}
+	scr, err := capture.Open(display)
 	if err != nil {
 		h.fail(err)
 		return h
 	}
-	log.Printf("startup: screen capture ready in %dms", time.Since(t0).Milliseconds())
+	scr.SetLayered(layered && h.settings.Bool("capture_layered", true))
+	log.Printf("startup: sharing %s; layered windows %v; screen capture ready in %dms",
+		scr.Display(), layered && h.settings.Bool("capture_layered", true), time.Since(t0).Milliseconds())
 	t0 = time.Now()
 	ln, err := remote.Listen(bind, id)
 	if err != nil {
@@ -198,8 +203,21 @@ func startHost(listen string, port, fps int, id tls.Certificate, trusted, settin
 	log.Printf("startup: QUIC listener ready in %dms", time.Since(t0).Milliseconds())
 	w, ht := scr.Size()
 	log.Printf("hosting %dx%d on UDP %s", w, ht, bind)
-	go acceptLoop(h, ln, scr, inject.New(w, ht), fps)
+	inj := inject.New(w, ht)
+	retargetInjector(inj, scr.Display())
+	go acceptLoop(h, ln, scr, inj, fps)
 	return h
+}
+
+// retargetInjector points the injector at monitor d. The primary monitor keeps the
+// plain mapping; any other needs the virtual-desktop one, with its position in it.
+func retargetInjector(inj *inject.Injector, d capture.Display) {
+	if d.Primary {
+		inj.SetPrimary(int(d.W), int(d.H))
+		return
+	}
+	vx, vy, vw, vh := capture.VirtualScreen()
+	inj.SetDisplay(int(d.W), int(d.H), int(d.X), int(d.Y), vx, vy, vw, vh)
 }
 
 func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *inject.Injector, fps int) {
@@ -234,6 +252,11 @@ func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *injec
 				Gate:            gate,
 				Sessions:        h.sessions,
 				HostName:        remote.ComputerName(),
+				OnSourceChanged: func(w, h int) {
+					d := scr.Display()
+					log.Printf("shared screen is now %s", d)
+					retargetInjector(inj, d)
+				},
 				OnPeer: func(p remote.PeerInfo) {
 					log.Printf("viewer %s speaks control protocol v%d (name %q)", conn.RemoteAddr(), p.Version, p.Name)
 				},

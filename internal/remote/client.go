@@ -62,6 +62,10 @@ type DialOptions struct {
 	Password string // may be empty; the host only asks for it if this PC is not paired
 	Name     string // this PC's display name for a v1 host's lists; default: the computer name
 	ForceV0  bool   // speak only the original protocol (tests and diagnostics)
+	// WantCursor asks a v1 host to draw the system pointer into the picture, for a
+	// viewer that has no pointer of its own on screen (a phone). A viewer that does
+	// show its own pointer should leave it off, or it shows two.
+	WantCursor bool
 }
 
 // Dial connects to a host, presenting id and pinning the host's fingerprint in
@@ -103,6 +107,9 @@ func DialWith(ctx context.Context, addr string, id tls.Certificate, hosts *trust
 		name = ComputerName()
 	}
 	hello := proto.HelloV1{Version: proto.Version1, Password: o.Password, Name: name}
+	if o.WantCursor {
+		hello.Caps |= proto.CapCursor
+	}
 	if err := cd.writeHello(ctrl, hello); err != nil {
 		conn.CloseWithError(0, "")
 		return nil, err
