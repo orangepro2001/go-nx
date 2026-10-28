@@ -1,5 +1,7 @@
 # 工控远程控制方案 —— 最终收敛版
 
+> **这是设计意图，不是实现状态。** 文中的 DXGI DDA、xxHash/LZ4、S0–S4 分流、版本协商、6 位配对码、view/control 分级、`FAILED(SECURE_DESKTOP)` 等多数**尚未实现**。以代码为准的清单见 [`IMPLEMENTED.md`](IMPLEMENTED.md)。
+
 | 项目 | 内容 |
 |---|---|
 | 版本 | v3.0（取代 v1.0 报告与 v2.0 收敛方案） |

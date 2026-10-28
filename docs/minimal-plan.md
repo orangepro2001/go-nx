@@ -1,5 +1,7 @@
 # go-nx 最小方案(定稿)
 
+> **这是设计意图，不是实现状态。** 例如 tile 差分实际用 `bytes.Equal` 而非 xxHash64，编码用 flate 而非 LZ4，配对没有 6 位码。以代码为准的清单见 [`IMPLEMENTED.md`](IMPLEMENTED.md)。
+
 目标:Win10/Win11 之间的轻量、可靠、抗网络波动的远程查看与操作。帧率低可接受。
 
 ## 技术选择

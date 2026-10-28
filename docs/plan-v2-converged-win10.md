@@ -1,4 +1,6 @@
 # NSU 方案收敛版 v2：放弃 Windows 7 后的架构简化
+
+> **已被 v3（[`final-converged-plan.md`](final-converged-plan.md)）取代，且是设计意图而非实现状态。** 以代码为准的清单见 [`IMPLEMENTED.md`](IMPLEMENTED.md)。
 ### 决策文档 —— 从"能做"收敛到"最小可行且可交付"
 
 | 项目 | 内容 |
