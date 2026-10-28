@@ -85,7 +85,7 @@ def main():
     ap.add_argument("--probe", required=True, help="the nx-probe program (a command line is fine)")
     a = ap.parse_args()
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         # --host and --probe may be a command with arguments (e.g. "wine nx-host.exe").
         posix = os.name != "nt"  # backslashes in a Windows path are not escapes
         host_cmd, probe_cmd = shlex.split(a.host, posix=posix), shlex.split(a.probe, posix=posix)
@@ -163,6 +163,7 @@ def main():
             if failures:
                 print("---- nx-host stderr ----")
                 print(h.stderr.read())
+            h.stderr.close()  # Windows cannot delete a directory with an open file in it
 
     if failures:
         print("\n%d check(s) failed" % len(failures))
