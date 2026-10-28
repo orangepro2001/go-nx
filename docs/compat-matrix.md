@@ -14,13 +14,15 @@
 | 0.4.0 | 2026-10-28 | v0（含 NightDesk 的 `MsgText`、`KindWheelH`）+ **v1**（版本与能力协商） | 文本输入（`KEYEVENTF_UNICODE`）、横向滚轮、v1 握手与能力位 |
 | 0.5.0 | 2026-10-28 | 同 0.4.0（线上协议没有变化） | 多显示器与分辨率变化、帧内指针（按需）、确定的释放顺序、Win+L 策略、绝对坐标逐像素精确、异步发送队列、**关闭时输入先到主机**、更新器加固。versionCode 500，sha256 `552708ee4023213bd971d3a8b627f8e3f2dc33249e57e6d12a797e30808fe41e` |
 | 0.6.0 | 2026-10-28 | 同 0.4.0（线上协议没有变化） | **动态帧率**：画面在变时 10 fps，控制端操作时 30 fps，静止 3 s 后 2 fps；控制端的输入立刻唤醒抓屏。新参数 `-fps-active`、`-fps-idle`。versionCode 600，sha256 `bd41bd793243fb12653f69ac1dea5800f622bbc01b578fb1fc288b3bd1eafc16` |
+| 0.7.0 | 2026-10-28 | 同 0.4.0（线上协议没有变化；新增连接关闭码 8，见 `protocol.md`） | **新界面**（U1–U4）：设备 / 本机 / 日志 / 设置 / 会话，简体中文 / English / 한국어，蓝色主题（深色 / 浅色），会话工具条（适应 / 100% 与平移、全屏、发送文本、统计、修饰键角标、网络断开后自动重连）；已配对设备列表不再显示对方连接时的端口。versionCode 700，sha256 `d6c77efdc2106e37610bd08b549591461cbe2fdc232e747e023779958aade018` |
 | 未发布 | — | 同 0.4.0 | 只有文档、CI 和不在 `go-nx.exe` 里的东西：`mobile`、`tools/{perf,u0,mkzip}`、`internal/{netem,synth,logsink,probe}` |
 
 **核心应用 `go-nx-core`**（`nx-host`、`nx-probe` 与契约，版本 `CORE_VERSION`，与 go-nx 的版本无关）：
 
 | 核心版本 | 日期 | 线上协议 | `nx-host` schema | 值得知道的变化 |
 |---|---|---|---|---|
-| 0.1.0 | 2026-10-28（发布后在 `release.md` 记录哈希） | v0 + v1 | 1 | 第一次作为单独应用发布：`nx-host`（JSON Lines 控制接口、动态帧率 `-fps` / `-boost` / `-idle`）、`nx-probe`（schema 1） |
+| 0.1.0 | 2026-10-28 | v0 + v1 | 1 | 第一次作为单独应用发布：`nx-host`（JSON Lines 控制接口、动态帧率 `-fps` / `-boost` / `-idle`）、`nx-probe`（schema 1）。versionCode 100，zip sha256 `d3bf542e8b307f27132b12bbbd41b90783f83f40ca5d7ba4fb6f1024c34bdfbb` |
+| 0.2.0 | 2026-10-28 | v0 + v1 | 1 | 连接关闭码 8（主机方踢出该会话）写入 `protocol.md` 并被客户端识别；`Client.Stats`（RTT / 帧率 / 码率）。线上格式不变。versionCode 200，zip sha256 `a4f8e3d971b8b4fa3b6d660fe360e93857f2952b487f6169324177ccd4b36960`；从发布提交 `c9b3e21` 重建，两次构建字节一致 |
 
 **协议兼容矩阵**（`remote` 的测试逐对验证过，`protocol.md` 有详表）：任一版本的 v0 查看器能连任一版本的主机；v1 查看器连 v0 主机时回落到 v0（不能声明能力，所以文本 / 横向滚轮需要调用方明确 `AssumeCaps`）；v1 的主机接受 v0 与 v1 两种查看器。NightDesk 已发布客户端使用的 v0 扩展（`MsgText = 4`、`KindWheelH = 7`）是 v0 规范的一部分，不会被移除。
 
