@@ -57,7 +57,11 @@ next="$major.$minor.$patch"
 code=$((major * 10000 + minor * 100 + patch))
 
 # The highest versionCode ever published for this platform, yanked or not: a code is never reused.
-latest=$(relhub list -app "$APP" | awk -v p="$PLATFORM" '$1 == p && $4 ~ /^[0-9]+$/ { if ($4 > m) m = $4 } END { print m }')
+# (An application that has never been published, like go-nx-core before its first release, has none.)
+latest=""
+if relhub app show -id "$APP" >/dev/null 2>&1; then
+	latest=$(relhub list -app "$APP" | awk -v p="$PLATFORM" '$1 == p && $4 ~ /^[0-9]+$/ { if ($4 > m) m = $4 } END { print m }')
+fi
 if [[ -n $latest ]] && (( code <= latest )); then
 	echo "version $next (code $code) is not newer than the published one (code $latest); bump further or fix $VFILE" >&2
 	exit 1
