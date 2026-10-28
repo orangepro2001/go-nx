@@ -9,7 +9,6 @@ import (
 	"log"
 	"net"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -127,23 +126,12 @@ func (h *hostState) DisconnectController() {
 }
 
 // Paired lists the paired devices, most recent first. The store keeps, for each device's
-// fingerprint, the address and the time it paired ("10.0.0.7:5000 2026-10-28 09:30").
+// fingerprint, the address and the time it paired.
 func (h *hostState) Paired() []app.PairedDevice {
 	var out []app.PairedDevice
 	for _, fp := range h.trusted.Keys() {
 		v, _ := h.trusted.Get(fp)
-		d := app.PairedDevice{Fingerprint: fp, Addr: v}
-		if i := strings.LastIndex(v, " "); i > 0 {
-			if j := strings.LastIndex(v[:i], " "); j > 0 {
-				if t, err := time.ParseInLocation("2006-01-02 15:04", v[j+1:], time.Local); err == nil {
-					d.Addr, d.When = v[:j], t
-				}
-			}
-		}
-		if i := strings.LastIndex(d.Addr, ":"); i > 0 { // the source port means nothing to a person
-			d.Addr = d.Addr[:i]
-		}
-		out = append(out, d)
+		out = append(out, app.ParsePaired(fp, v, time.Local))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].When.After(out[j].When) })
 	return out
@@ -216,6 +204,9 @@ func (h *hostState) check(fp, addr, password string) (trust.Verdict, error) {
 		h.Rejected, h.RejectedBy = "", app.ReasonNone
 		if h.seen == nil {
 			h.seen = map[string]seenPeer{}
+		}
+		if len(h.seen) >= 64 { // connections that were let in and never became the controller
+			clear(h.seen)
 		}
 		h.seen[addr] = seenPeer{fp: fp, verified: v != trust.AllowedOpen}
 	} else {

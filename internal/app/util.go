@@ -2,7 +2,9 @@ package app
 
 import (
 	"fmt"
+	"net"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,4 +94,24 @@ func countdown(d time.Duration) (minutes int, seconds string) {
 	}
 	s := int((d + 999*time.Millisecond) / time.Second) // round up: 0:00 means it is over
 	return s / 60, fmt.Sprintf("%02d", s%60)
+}
+
+// ParsePaired reads what the store of paired devices keeps for a device: the address it paired
+// from and when, as "10.0.0.7:5000 2026-10-28 09:30". The port a device happened to connect
+// from means nothing to a person, so it is dropped; a value that is not in that form is kept
+// whole as the address, with no time.
+func ParsePaired(fingerprint, value string, loc *time.Location) PairedDevice {
+	d := PairedDevice{Fingerprint: fingerprint, Addr: strings.TrimSpace(value)}
+	// "<addr> <date> <time>": the last two fields are the date and the time.
+	if f := strings.Fields(value); len(f) >= 3 {
+		if t, err := time.ParseInLocation("2006-01-02 15:04", f[len(f)-2]+" "+f[len(f)-1], loc); err == nil {
+			d.Addr, d.When = strings.Join(f[:len(f)-2], " "), t
+		}
+	}
+	if host, port, err := net.SplitHostPort(d.Addr); err == nil {
+		if n, err := strconv.Atoi(port); err == nil && n > 0 && n < 65536 {
+			d.Addr = host
+		}
+	}
+	return d
 }

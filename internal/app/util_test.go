@@ -110,3 +110,27 @@ func TestCountdown(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePaired(t *testing.T) {
+	loc := time.FixedZone("test", 9*3600)
+	at := time.Date(2026, 10, 28, 9, 30, 0, 0, loc)
+	for _, c := range []struct {
+		in   string
+		addr string
+		when time.Time
+	}{
+		{"10.0.0.7:5000 2026-10-28 09:30", "10.0.0.7", at},
+		{"10.0.0.7 2026-10-28 09:30", "10.0.0.7", at},
+		{"[fe80::1]:5000 2026-10-28 09:30", "fe80::1", at},
+		{"host.example:7000 2026-10-28 09:30", "host.example", at},
+		{"10.0.0.7:5000", "10.0.0.7", time.Time{}},
+		{"something unexpected", "something unexpected", time.Time{}},
+		{"10.0.0.7:5000 yesterday at lunch", "10.0.0.7:5000 yesterday at lunch", time.Time{}},
+		{"", "", time.Time{}},
+	} {
+		d := ParsePaired("fp", c.in, loc)
+		if d.Fingerprint != "fp" || d.Addr != c.addr || !d.When.Equal(c.when) {
+			t.Errorf("ParsePaired(%q) = %+v, want %q at %v", c.in, d, c.addr, c.when)
+		}
+	}
+}
