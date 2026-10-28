@@ -39,7 +39,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libgl1-mesa-dev libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev
+            libgl1-mesa-dev libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev \
+            xvfb libgl1-mesa-dri libglx-mesa0 libegl1 libegl-mesa0
 
       - name: gofmt
         run: |
@@ -72,6 +73,23 @@ jobs:
           go install golang.org/x/mobile/cmd/gobind@v0.0.0-20261011034528-197770444867
           export PATH="$(go env GOPATH)/bin:$PATH"
           scripts/build-aar.sh --check-api
+
+      # U0, the technical validation that precedes any interface work (docs/ui-baseline.md):
+      # Ebiten under a virtual X server with Mesa's software GL. It checks the shader against
+      # its formula, three-script text, a screenshot and ScheduleFrame, and keeps the report.
+      - name: U0 spike (Ebiten under Xvfb)
+        run: |
+          go build -o "$RUNNER_TEMP/u0" ./tools/u0
+          xvfb-run -a -s "-screen 0 1920x1200x24" "$RUNNER_TEMP/u0" all -seconds 3 -check \
+            -png "$RUNNER_TEMP/u0-linux.png" -out "$RUNNER_TEMP/u0-linux.json" > /dev/null
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: u0-linux
+          path: |
+            ${{ runner.temp }}/u0-linux.json
+            ${{ runner.temp }}/u0-linux.png
+          if-no-files-found: ignore
 
       # The protocol/session core must stay free of UI and Windows-only imports.
       - name: portable core builds elsewhere
@@ -123,3 +141,21 @@ jobs:
           GO_NX_WINDOWS_E2E: "1"
         # -p 1 runs the packages one after the other: they share the desktop.
         run: go test -count=1 -p 1 -v ./internal/capture ./internal/inject
+
+      # U0 on a real Windows desktop (DirectX 11, software rendering on the runner): fonts that
+      # Windows ships, the shader, ScheduleFrame, idle cost, and keys injected into the window.
+      - name: U0 spike (Ebiten on Windows)
+        # Informational until it has run green here once: the runner's desktop, fonts and
+        # focus behaviour are what is being found out.
+        continue-on-error: true
+        run: |
+          go build -o "$RUNNER_TEMP/u0.exe" ./tools/u0
+          "$RUNNER_TEMP/u0.exe" all -seconds 3 -check -png "$RUNNER_TEMP/u0-windows.png" -out "$RUNNER_TEMP/u0-windows.json" > /dev/null
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: u0-windows
+          path: |
+            ${{ runner.temp }}/u0-windows.json
+            ${{ runner.temp }}/u0-windows.png
+          if-no-files-found: ignore
