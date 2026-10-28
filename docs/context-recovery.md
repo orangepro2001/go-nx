@@ -11,8 +11,8 @@ go-nx：Windows 10/11 上的轻量局域网远程控制。纯 Go、无 cgo、单
 
 ## 当前状态（2026-10-28）
 
-- 已接入本机 release-publish：app `go-nx`，平台 `win-x64`，**0.1.0（versionCode 100）已发布**到线上。
-- 应用内自更新已实现并通过测试；**Windows 实机上的托盘、替换 exe、重启流程还没验证过**。
+- 已接入本机 release-publish：app `go-nx`，平台 `win-x64`，**0.2.0（versionCode 200）是线上最新**（0.1.0 仍在列表里）。0.2.0 含阶段 1 的全部安全改动和主页的版本号 / `Check for updates` 按钮。
+- 应用内自更新已实现并通过测试（入口：主页右上角按钮，0.2.0 起；系统托盘右键菜单，0.1.0 起）；**Windows 实机上的替换 exe、重启流程还没验证过**。现在可以用真实版本试：装着 0.1.0 的机器，托盘菜单点更新项 → `Restart to update to v0.2.0`。
 - 当前工作是 [`ROADMAP.md`](ROADMAP.md) 的开发计划：**阶段 0 完成**（基线、状态文档、CI）；**阶段 1 已完成**，其内容：「恶意主机上限 + fuzz」「JSON 原子写 + 损坏文件隔离」，「撤销已信任设备 / 忘记主机身份」（逐设备列表还没有）。「按来源限流 + 未认证连接上限」已完成。「默认开启认证」「一次性配对码」已完成。「首次连接指纹核对」已完成。「监听地址可选（`-listen`）」已完成，**阶段 1 完成**（密码哈希 + DPAPI 经评估暂缓，理由见 ROADMAP「暂缓项」）。下一步是阶段 2（协议规范与版本协商）。
 - 所有提交已推送到 `origin main`；CI（`.github/workflows/ci.yml`，linux + windows-latest）在 `820d1f7` 上两个作业都通过。
 - 全局 git 身份：`orangepro2001 <yangziyi0801@gmail.com>`（2026-10-28 设置）。`98bda14` 的作者是 `tony`，没有改写。
@@ -22,6 +22,7 @@ go-nx：Windows 10/11 上的轻量局域网远程控制。纯 Go、无 cgo、单
 - **本仓库每完成一项可交付的工作就自动 commit + push 到 `origin main`**，无需询问。先跑完检查，通过才提交；只按文件名暂存，不用 `git add -A`，不 amend / reset / force push。
 - 这条授权**不含**：`release.sh` 发新版本、打 tag / GitHub Release、装依赖、改认证——这些仍需单独问。
 - **不要改动 NightDesk 侧任何源码**（`/home/tony/dev/nightdesk-*`、`/home/tony/dev/native` 等）：那个项目不是最新版本，只读，当回移参考；改它对 go-nx 的依赖留到以后。
+- **每完成一项改变程序行为的改动就发布一个新版本**（用户 2026-10-28 要求）：先提交并推送，再在干净树上 `scripts/ship.sh --bump patch|minor "说明"`（它会等 CI 绿才发布并验证）。只改文档 / CI / 测试的提交不发。`--dry-run` 只看计划。
 - 项目是**单一上游**：NightDesk 的通用修复回移到这里。协议要保持对 NightDesk 已发布客户端的兼容（`MsgText=4`、`KindWheelH=7`）。
 - 只有一台日常使用的 Windows PC：会改系统状态的实机项只写成人工清单（`ACCEPTANCE.md` §3）。真实 Windows 行为优先用 CI 的 `windows-latest` 验证。
 
@@ -34,7 +35,8 @@ GOOS=windows go test -c -o $TMP/x.exe ./internal/capture   # Windows 测试可�
 gh run list --limit 3          # 看 CI；gh 已登录 orangepro2001
 go test -race ./internal/update/
 ./scripts/e2e-update.sh        # 真实 relhub + 临时目录 + 随机回环端口，不碰线上服务
-NOTES="改了什么" ./release.sh  # 需要干净工作区；ALLOW_DIRTY=1 可跳过
+scripts/ship.sh --bump patch "改了什么"   # 每次改动的发布：升版本 → 推送 → 等 CI 绿 → release.sh → 验证
+NOTES="改了什么" ./release.sh  # 只发布当前 VERSION；需要干净工作区；ALLOW_DIRTY=1 可跳过
 relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 有更新，20 强制
 ```
 
@@ -53,7 +55,8 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 | `cmd/go-nx/winapi_windows.go` | `alreadyRunning(wait)`：单实例互斥量，重启时带重试 |
 | `internal/update/update.go` | 更新器：`New`、`Run`、`CheckNow`、`Install`、`Replace`、`CleanupOld`、`PinnedKeys` |
 | `internal/relhub/` | release-publish 客户端 SDK 的副本（来源与同步方法见其 README） |
-| `docs/release.md` | 发布流程、客户端行为、公钥轮换、测试 |
+| `docs/release.md` | 发布流程（含每次改动的 `ship.sh`）、更新入口在哪、客户端行为、公钥轮换、测试 |
+| `scripts/ship.sh` | 一条命令发布一次改动：预检线上版本 → 升 `VERSION` → 提交推送 → 等 CI → 发布 → 验证 |
 | `docs/ROADMAP.md` | 开发路线图与各阶段状态（**先读**） |
 | `docs/IMPLEMENTED.md` | 实现状态，以代码为准，带文件:行；设计文档只是意图 |
 | `docs/ACCEPTANCE.md` | 已验证 / 未验证；CI runner 实测结果；人工实机清单 H1–H12 |
@@ -97,5 +100,6 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 
 ## 最近一份交接文档
 
-[`docs/handoff-2026-10-28-phase1-security-baseline.md`](handoff-2026-10-28-phase1-security-baseline.md)：阶段 1（安全基线）的成果、行为变更（发布前要写进说明）、验证、问题、取舍、经验。
+[`docs/handoff-2026-10-28-release-0.2.0.md`](handoff-2026-10-28-release-0.2.0.md)：回答"有没有自动推送更新"、主页更新按钮、`ship.sh`、0.2.0 的发布与独立验证。
+更早：[`docs/handoff-2026-10-28-phase1-security-baseline.md`](handoff-2026-10-28-phase1-security-baseline.md)：阶段 1（安全基线）的成果、行为变更（发布前要写进说明）、验证、问题、取舍、经验。
 更早：[`docs/handoff-2026-10-28-phase0-baseline.md`](handoff-2026-10-28-phase0-baseline.md)（阶段 0）、[`docs/handoff-2026-10-28-release-publish.md`](handoff-2026-10-28-release-publish.md)（接入 release-publish）。
