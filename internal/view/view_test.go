@@ -1,6 +1,7 @@
 package view
 
 import (
+	"bytes"
 	"math"
 	"testing"
 )
@@ -149,6 +150,77 @@ func TestIsModifierIgnoresTheExtendedBit(t *testing.T) {
 	}{{0xA0, true}, {0xA5, true}, {0x5B, true}, {0x15C, true}, {0x10, true}, {0x41, false}, {0x70, false}, {0x10D, false}} {
 		if IsModifier(c.code) != c.want {
 			t.Errorf("IsModifier(%#x) = %v", c.code, !c.want)
+		}
+	}
+}
+
+// The pixel contract of the viewer: frames arrive as B,G,R,X and are shown as
+// R,G,B,255. The fourth byte of a frame is not defined by the protocol, so
+// whatever it holds (a capture that leaves it at 0, one that fills it with
+// garbage) must not make the picture transparent.
+func TestBGRAToRGBA(t *testing.T) {
+	bgra := []byte{
+		0, 0, 255, 0, // red, with an alpha of 0
+		0, 255, 0, 17, // green
+		255, 0, 0, 255, // blue
+		0, 128, 255, 99, // orange
+		10, 20, 30, 40, // asymmetric: B=10 G=20 R=30
+	}
+	want := []byte{
+		255, 0, 0, 255,
+		0, 255, 0, 255,
+		0, 0, 255, 255,
+		255, 128, 0, 255,
+		30, 20, 10, 255,
+	}
+	got := make([]byte, len(bgra))
+	BGRAToRGBA(got, bgra)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("BGRAToRGBA = %v, want %v", got, want)
+	}
+	// Converting in place is what a caller that owns one buffer would do.
+	buf := append([]byte(nil), bgra...)
+	BGRAToRGBA(buf, buf)
+	if !bytes.Equal(buf, want) {
+		t.Fatalf("in place: %v, want %v", buf, want)
+	}
+	// Converting twice is not the identity: a caller must convert exactly once.
+	BGRAToRGBA(buf, buf)
+	if bytes.Equal(buf, want) {
+		t.Fatal("two conversions gave the same result as one")
+	}
+}
+
+// A buffer whose length is not a whole number of pixels converts the whole pixels
+// and leaves the tail alone instead of reading or writing out of range.
+func TestBGRAToRGBAIgnoresAPartialPixel(t *testing.T) {
+	src := []byte{1, 2, 3, 4, 5, 6, 7}
+	dst := make([]byte, len(src))
+	BGRAToRGBA(dst, src)
+	if want := []byte{3, 2, 1, 255, 0, 0, 0}; !bytes.Equal(dst, want) {
+		t.Fatalf("got %v, want %v", dst, want)
+	}
+}
+
+// Every pixel of a larger picture, in the way the viewer converts a tile: row by
+// row out of a full frame.
+func TestBGRAToRGBAOfAWholeSyntheticPicture(t *testing.T) {
+	const w, h = 64, 48
+	src := make([]byte, w*h*4)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			o := (y*w + x) * 4
+			src[o], src[o+1], src[o+2], src[o+3] = byte(x), byte(y), byte(x+y), byte(x*y)
+		}
+	}
+	dst := make([]byte, len(src))
+	BGRAToRGBA(dst, src)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			o := (y*w + x) * 4
+			if dst[o] != byte(x+y) || dst[o+1] != byte(y) || dst[o+2] != byte(x) || dst[o+3] != 255 {
+				t.Fatalf("pixel %d,%d = %v", x, y, dst[o:o+4])
+			}
 		}
 	}
 }

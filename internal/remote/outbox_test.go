@@ -10,6 +10,7 @@ import (
 
 	"github.com/orangepro2001/go-nx/internal/proto"
 	"github.com/orangepro2001/go-nx/internal/tile"
+	"github.com/orangepro2001/go-nx/internal/trust"
 )
 
 // A host that stops reading must never freeze the caller of SendInput: the call
@@ -164,5 +165,150 @@ func TestAStalledControlStreamClosesTheConnection(t *testing.T) {
 	}
 	if err := c.SendInput(proto.Input{OpID: 1 << 40, Kind: proto.KindKeyDown, Arg: 66}); err == nil {
 		t.Error("SendInput succeeded after the connection was closed")
+	}
+}
+
+// Input accepted before Close is on its way before the connection goes: a key that
+// was released a moment before the program quit has to reach the host, or it stays
+// pressed there until the host's own watchdog lets go of it.
+func TestCloseDeliversWhatWasQueued(t *testing.T) {
+	r := start(t, Options{}, true, 0)
+	if r.dialErr != nil {
+		t.Fatal(r.dialErr)
+	}
+	const pairs = 300
+	for i := 0; i < pairs; i++ {
+		r.client.SendInput(proto.Input{Kind: proto.KindKeyDown, Arg: int32(65 + i%20)})
+		r.client.SendInput(proto.Input{Kind: proto.KindKeyUp, Arg: int32(65 + i%20)})
+	}
+	if err := r.client.SendText(1, "last words"); err != nil {
+		t.Fatal(err)
+	}
+	r.client.Close() // straight away, with most of it still waiting to be written
+
+	waitForInputCount(t, r.inj, proto.KindKeyUp, pairs)
+	waitFor(t, "the last text to arrive", func() bool { return len(r.inj.typed()) == 1 })
+	if err := r.client.SendInput(proto.Input{Kind: proto.KindKeyDown, Arg: 1}); err == nil {
+		t.Error("SendInput succeeded after Close")
+	}
+}
+
+// On a link that is dead Close must not wait for the input to be sent: it gives
+// what is waiting a moment and then goes.
+func TestCloseGivesUpOnADeadLinkQuickly(t *testing.T) {
+	stalled := make(chan struct{})
+	addr := hostileHost(t, func(ctx context.Context, conn *quic.Conn) { <-stalled })
+	defer close(stalled)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c, err := Dial(ctx, addr, identity(t), hostsStore(t), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 300_000; i++ { // more than the stream's window: the writer is stuck
+		c.SendInput(proto.Input{OpID: uint64(i + 1), Kind: proto.KindKeyDown, Arg: 65})
+	}
+	start := time.Now()
+	c.Close()
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("Close took %v on a link that was not draining", d)
+	}
+}
+
+func TestFlushReportsWhetherEverythingWasWritten(t *testing.T) {
+	r := start(t, Options{}, true, 0)
+	if r.dialErr != nil {
+		t.Fatal(r.dialErr)
+	}
+	if err := r.client.Flush(time.Second); err != nil {
+		t.Fatalf("Flush of an empty queue = %v", err)
+	}
+	for i := 0; i < 200; i++ {
+		r.client.SendInput(proto.Input{Kind: proto.KindKeyDown, Arg: 65})
+	}
+	if err := r.client.Flush(5 * time.Second); err != nil {
+		t.Fatalf("Flush = %v, want the queue written", err)
+	}
+	waitForInputCount(t, r.inj, proto.KindKeyDown, 200)
+}
+
+// slowInjector is a host that takes a moment over every input.
+type slowInjector struct {
+	fakeInjector
+	delay time.Duration
+}
+
+func (s *slowInjector) Inject(in proto.Input) error {
+	time.Sleep(s.delay)
+	return s.fakeInjector.Inject(in)
+}
+
+// An acknowledgement that is written after the control stream has been ended (the
+// viewer was busy with a picture when the program quit) must not take the
+// connection down with the input still on its way. The host here takes 60 ms to get
+// through the input, the viewer 20 ms over its first picture, so the acknowledgement
+// is written after Close has ended the stream and before the host has read it all.
+func TestCloseWhileAnAcknowledgementIsStillToCome(t *testing.T) {
+	for round := 0; round < 5; round++ {
+		hostID, viewerID := identity(t), identity(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ln, err := Listen("127.0.0.1:0", hostID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inj := &slowInjector{delay: 150 * time.Microsecond}
+		go func() {
+			conn, err := ln.Accept(ctx)
+			if err != nil {
+				return
+			}
+			Serve(ctx, conn, newFakeSource(150, 90), inj, proto.NewDedup(), Options{FPS: 50, Check: func(f, _, _ string) (trust.Verdict, error) {
+				if f == fp(viewerID) {
+					return trust.Allowed, nil
+				}
+				return trust.Untrusted, nil
+			}})
+		}()
+		c, err := Dial(ctx, ln.Addr().String(), viewerID, hostsStore(t), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		go c.Run(ctx, func(*tile.Frame, []tile.Rect) { time.Sleep(20 * time.Millisecond) }, func(uint64, byte) {})
+		select {
+		case <-c.welcome:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no welcome")
+		}
+
+		const pairs = 200
+		for i := 0; i < pairs; i++ {
+			c.SendInput(proto.Input{Kind: proto.KindKeyDown, Arg: int32(65 + i%20)})
+			c.SendInput(proto.Input{Kind: proto.KindKeyUp, Arg: int32(65 + i%20)})
+		}
+		c.SendText(1, "last words")
+		c.Close()
+		waitForInputCount(t, &inj.fakeInjector, proto.KindKeyUp, pairs)
+		waitFor(t, "the last text to arrive", func() bool { return len(inj.typed()) == 1 })
+		cancel()
+		ln.Close()
+	}
+}
+
+// A viewer that closes politely ends its control stream; for the host that is the
+// session ending normally, not an error to log or to report.
+func TestAViewerThatClosesPolitelyEndsTheSessionWithoutAnError(t *testing.T) {
+	r := start(t, Options{}, true, 0)
+	if r.dialErr != nil {
+		t.Fatal(r.dialErr)
+	}
+	r.client.SendInput(proto.Input{Kind: proto.KindKeyDown, Arg: 65})
+	r.client.Close()
+	select {
+	case err := <-r.served:
+		if err != nil {
+			t.Fatalf("Serve returned %v after the viewer closed politely, want nil", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the session did not end")
 	}
 }

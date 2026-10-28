@@ -109,7 +109,7 @@ func (s *session) onFrame(f *tile.Frame, dirty []tile.Rect) {
 			s.fw, s.fh = f.W, f.H
 			s.rgba = make([]byte, f.W*f.H*4)
 		}
-		bgraToRGBA(s.rgba, f.Pix)
+		view.BGRAToRGBA(s.rgba, f.Pix)
 		s.full = true
 		s.patches = s.patches[:0] // the whole frame supersedes earlier patches
 		return
@@ -118,16 +118,9 @@ func (s *session) onFrame(f *tile.Frame, dirty []tile.Rect) {
 		pix := make([]byte, r.W*r.H*4)
 		for y := 0; y < r.H; y++ {
 			o := ((r.Y+y)*f.W + r.X) * 4
-			bgraToRGBA(pix[y*r.W*4:(y+1)*r.W*4], f.Pix[o:o+r.W*4])
+			view.BGRAToRGBA(pix[y*r.W*4:(y+1)*r.W*4], f.Pix[o:o+r.W*4])
 		}
 		s.patches = append(s.patches, patch{r, pix})
-	}
-}
-
-// bgraToRGBA converts src to dst (same length), forcing alpha to opaque.
-func bgraToRGBA(dst, src []byte) {
-	for i := 0; i+3 < len(src); i += 4 {
-		dst[i], dst[i+1], dst[i+2], dst[i+3] = src[i+2], src[i+1], src[i], 255
 	}
 }
 

@@ -13,6 +13,9 @@ var ErrBacklog = errors.New("remote: the host is not keeping up with input")
 
 var errOutboxClosed = errors.New("remote: the connection is closed")
 
+// ErrFlushTimeout is returned by Flush when input was still waiting at the deadline.
+var ErrFlushTimeout = errors.New("remote: input is still waiting to be sent")
+
 const (
 	maxOutbox           = 1024             // messages waiting to be written
 	controlWriteTimeout = 10 * time.Second // longest one write to the control stream may take
@@ -35,6 +38,7 @@ type outbox struct {
 	mu           sync.Mutex
 	wake         chan struct{}
 	q            []outMsg
+	pending      int   // messages queued or being written
 	err          error // set once the connection is unusable
 	writeTimeout time.Duration
 }
@@ -60,6 +64,7 @@ func (o *outbox) push(m outMsg) error {
 		return ErrBacklog
 	}
 	o.q = append(o.q, m)
+	o.pending++
 	select {
 	case o.wake <- struct{}{}:
 	default:
@@ -76,6 +81,34 @@ func (o *outbox) drain() []outMsg {
 	return q
 }
 
+// written records that n drained messages have been written.
+func (o *outbox) written(n int) {
+	o.mu.Lock()
+	o.pending -= n
+	o.mu.Unlock()
+}
+
+// flush waits until everything accepted so far has been written, the outbox has
+// failed, or the timeout has passed.
+func (o *outbox) flush(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		o.mu.Lock()
+		err, pending := o.err, o.pending
+		o.mu.Unlock()
+		if err != nil {
+			return err
+		}
+		if pending <= 0 {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return ErrFlushTimeout
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // fail makes every later push return err.
 func (o *outbox) fail(err error) {
 	o.mu.Lock()
@@ -83,5 +116,6 @@ func (o *outbox) fail(err error) {
 		o.err = err
 	}
 	o.q = nil
+	o.pending = 0
 	o.mu.Unlock()
 }

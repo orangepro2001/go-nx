@@ -83,3 +83,14 @@ func ReleaseOrder(codes []uint16) []uint16 {
 	})
 	return out
 }
+
+// BGRAToRGBA converts pixels from the order frames arrive in (blue, green, red, and
+// a fourth byte the protocol leaves undefined) to the order a display wants (red,
+// green, blue, opaque). dst and src may be the same slice; a trailing partial pixel
+// is left alone. Every viewer converts exactly once: the conversion is not its own
+// inverse for the fourth byte.
+func BGRAToRGBA(dst, src []byte) {
+	for i := 0; i+3 < len(src) && i+3 < len(dst); i += 4 {
+		dst[i], dst[i+1], dst[i+2], dst[i+3] = src[i+2], src[i+1], src[i], 255
+	}
+}

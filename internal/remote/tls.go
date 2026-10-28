@@ -128,10 +128,10 @@ func pinnedClientTLS(id tls.Certificate, expected string, maxVersion int) *tls.C
 	}
 }
 
-// normalizeFingerprint reads a fingerprint as people and QR codes write it: any
+// NormalizeFingerprint reads a fingerprint as people and QR codes write it: any
 // case, with or without colons or spaces between bytes. It reports false for
 // anything that is not 32 bytes of hex.
-func normalizeFingerprint(s string) (string, bool) {
+func NormalizeFingerprint(s string) (string, bool) {
 	var b strings.Builder
 	for _, r := range s {
 		switch {

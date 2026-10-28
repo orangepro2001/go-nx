@@ -50,6 +50,8 @@ type Client struct {
 	cd   codec
 	out  *outbox // input waiting to be written by writeLoop
 
+	closing atomic.Bool // Close has begun ending the control stream; nothing more may be written to it
+
 	maxFrame int64         // largest update stream accepted, in bytes
 	stall    time.Duration // longest an update stream may go silent
 
@@ -92,7 +94,7 @@ func DialWith(ctx context.Context, addr string, id tls.Certificate, hosts *trust
 	var cfg *tls.Config
 	var pin *pinRecorder // nil when the fingerprint was given and nothing is to be remembered
 	if o.ExpectFingerprint != "" {
-		want, ok := normalizeFingerprint(o.ExpectFingerprint)
+		want, ok := NormalizeFingerprint(o.ExpectFingerprint)
 		if !ok {
 			return nil, fmt.Errorf("remote: %q is not a certificate fingerprint (want 64 hex digits)", o.ExpectFingerprint)
 		}
@@ -206,7 +208,40 @@ func (c *Client) AssumeCaps(caps proto.Caps) {
 	}
 }
 
-func (c *Client) Close() { c.conn.CloseWithError(0, "") }
+// How long Close gives the input already accepted: closeFlush to be written to the
+// connection, and then closeLinger for the host to read it to the end and hang up.
+// A healthy link needs a few milliseconds; these only bound the wait on one that is
+// not.
+const (
+	closeFlush  = 300 * time.Millisecond
+	closeLinger = time.Second
+)
+
+// Flush waits until the input accepted so far has been written to the connection,
+// for at most timeout. It returns ErrFlushTimeout if some was still waiting, or the
+// error that made the connection unusable.
+func (c *Client) Flush(timeout time.Duration) error { return c.out.flush(timeout) }
+
+// Close ends the session. Input that was accepted a moment ago (a key released just
+// before quitting) gets there first, if the link takes it within a moment: it is
+// written, then the control stream is ended, which the host reads to its end,
+// carrying everything out, before it closes the connection. Closing the connection
+// at once would discard what had been written but not yet delivered. A link that
+// does not take the input in time is closed regardless.
+func (c *Client) Close() {
+	if c.out.flush(closeFlush) == nil {
+		c.wmu.Lock()
+		c.closing.Store(true)
+		c.ctrl.Close()
+		c.wmu.Unlock()
+		select {
+		case <-c.conn.Context().Done():
+		case <-time.After(closeLinger):
+		}
+	}
+	c.out.fail(errOutboxClosed) // from now on SendInput says so, instead of queueing for a connection that is gone
+	c.conn.CloseWithError(0, "")
+}
 
 // SendInput queues one user action to be sent and returns at once: it never
 // waits for the network, so the caller (a window's update loop) is never frozen
@@ -237,6 +272,7 @@ func (c *Client) writeLoop() {
 				if err := c.writeCtrl(m.write); err != nil {
 					return
 				}
+				c.out.written(1)
 			}
 		}
 	}
@@ -247,6 +283,12 @@ func (c *Client) writeLoop() {
 func (c *Client) writeCtrl(write func(io.Writer) error) error {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
+	if c.closing.Load() {
+		// The stream was ended on purpose; an acknowledgement that comes after that
+		// is not a failure and must not take the connection down with it, along with
+		// the input that is still on its way.
+		return errOutboxClosed
+	}
 	c.ctrl.SetWriteDeadline(time.Now().Add(c.out.writeTimeout))
 	if err := write(c.ctrl); err != nil {
 		c.out.fail(err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -327,6 +328,9 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 		case <-conn.Context().Done():
 			return nil
 		case err := <-readErr:
+			if errors.Is(err, io.EOF) {
+				return nil // the viewer ended its control stream on purpose (Client.Close): not a failure
+			}
 			return err
 		case <-ctx.Done():
 			return ctx.Err()

@@ -362,7 +362,7 @@ func waitForInputCount(t *testing.T, inj *fakeInjector, kind byte, want int) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("input kind %d count never reached %d", kind, want)
+	t.Fatalf("input kind %d count reached %d, never %d", kind, inj.count(kind), want)
 }
 
 func TestUntrustedViewerRejected(t *testing.T) {
