@@ -68,6 +68,9 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 | `internal/hostd/`、`cmd/nx-host/` | 无界面主机（sidecar）：JSON Lines 控制接口，契约 `docs/nx-host.md`；`-test-mode` 在任何机器上安全 |
 | `internal/{synth,logsink,probe}/`、`cmd/nx-probe/` | 合成画面（五种场景 + 四角颜色标记）、只记录输入的注入器、验收探针（固定指纹连接、核对回执与画面） |
 | `mobile/`、`scripts/build-aar.sh` | gomobile 的手机端核心，契约 `docs/mobile.md`；`mobile/api.golden` 固定 Java API；`--check-api` 不需要 SDK/NDK |
+| `tools/u0/`、`docs/ui-baseline.md` | U0 技术验证：`go run ./tools/u0 all`（Windows 直接跑；Linux 用 `xvfb-run -a`）；结果与对计划的影响见 `ui-baseline.md`；CI 的 linux 与 windows job 每次都跑并保留报告 |
+| `tools/perf/`、`docs/perf.md`、`internal/netem/` | 合成画面上的每帧成本与弱网（1 Mbit/s、80 ms、1% 丢包）验收；`netem` 是纯 Go 的用户态 UDP 代理 |
+| `scripts/artifacts.sh`、`docs/compat-matrix.md` | 构建全部程序、写哈希与清单、验证可复现；版本 ↔ 协议 ↔ 契约 |
 | `scripts/e2e-host-probe.py` | 把真实的 `nx-host` 与 `nx-probe` 作为独立进程跑一遍（CI 的 Linux 与 Windows 都跑） |
 | `docs/backport-ledger.md` | NightDesk → go-nx 的回移台账（B0–B5 全部完成） |
 

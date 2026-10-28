@@ -1,6 +1,6 @@
 # go-nx UI 重设计方案（v2）
 
-- 状态：**仅设计，没有任何代码改动**。v1 与 v2 都写于 2026-10-28。
+- 状态：**仅设计，没有任何界面代码改动**。v1 与 v2 写于 2026-10-28。**U0 技术验证已做**（同日，`docs/ui-baseline.md`），其结果已回写到第 3、4.2、4.3、11、12 节，用 **【U0】** 标出。
 - 依据：仓库现状（`internal/ui`、`cmd/go-nx`）、Ebiten v2.10.5 与 quic-go v0.64.1 与 go-text/typesetting v0.3.5 的源码（`~/go/pkg/mod`）、路线图与验收清单。
 - 约束来自项目初衷：**少依赖、超高性能**，单个静态 exe，无 cgo。不新增第三方模块。
 - 标注：**【事实】** 来自代码或模块源码，可复核；**【推断】** 是我的判断，没有在本项目里实测；**【目标】** 是要达到的数字，不是已测得的数字；**【提议】** 是尚未定的设计选择。所有性能数字必须先过 U0 的基线测量才算数。
@@ -52,15 +52,15 @@
 
 | 场景 | 预算 | 怎么测 |
 |---|---|---|
-| 窗口可见、无动画、无会话（空闲） | 单核 CPU < 0.3%，不提交 GPU 帧 | Windows 性能计数器 / 任务管理器采样 60 s |
+| 窗口可见、无动画、无会话（空闲） | 单核 CPU < 0.3%，不提交 GPU 帧。**【U0】** 只有 `FPSModeVsyncOffMinimum` + `ScheduleFrame` 稳定做到（两次运行 0 帧 / 秒、0.000%）；"跳过绘制"在 Windows runner 上 0–2%，Linux 软件 GL 上 2.5% | Windows 性能计数器 / 任务管理器采样 60 s |
 | 会话中画面静止 | 无输入、无 tile 更新时不提交帧 | 自己数 `Draw` 次数 |
 | 会话中画面更新 | 每帧最多 2 次 `DrawImage`（远程画面 + 缓存好的 UI 叠加层）；一个 64×64 tile 的上传 + 绘制 ≤ 0.2 ms | `testing.B` + 合成源 |
 | 主页一帧 CPU 提交时间 | p99 ≤ 2 ms（1080p，100% 缩放） | `testing.B`，N=1000 帧 |
 | UI 响应 | 点击到画面变化 ≤ 1 帧（16.7 ms @60Hz） | 输入时间戳到 `Draw` 完成 |
 | 启动到第一帧 | ≤ 300 ms（日志已记录 `first Draw`，先量基线）；**启动路径不读取 CJK 字体文件** | `go-nx.log` 的 startup 行 |
-| 首次用到某种 CJK 字体 | 打开并可用 ≤ 50 ms，且不把整个字体文件读进内存 | `testing.B` + 进程私有工作集 |
+| 首次用到某种 CJK 字体 | **【U0 改】** 打开并可用 ≤ 100 ms，**在后台 goroutine 里完成、不阻塞 UI**（实测 Windows：YaHei 100 ms、Malgun 34 ms、Segoe 5 ms）；留在堆里的是文件大小的 1.5–2.2 倍（YaHei 18.8→37 MB，Malgun 12.8→28 MB），**一次只常驻界面语言那一个** | `testing.B` + 进程私有工作集 |
 | 切换界面语言 | ≤ 100 ms，无需重启 | 计时 |
-| 常驻内存（空闲） | ≤ 60 MB，glyph / 文本布局缓存有上限 | 任务管理器私有工作集 |
+| 常驻内存（空闲） | **【U0 改】** 英文界面 ≤ 45 MB，中 / 韩界面 ≤ 80 MB 私有内存，glyph / 文本布局缓存有上限。依据：一个空的 Ebiten 窗口在 Windows 上就是 34 MB 私有 / 44 MB 工作集（软件渲染的 runner；真实 GPU 驱动待在用户 PC 上量），再加界面语言对应的 CJK 字体 28–37 MB。**原来的 60 MB 放不下中 / 韩界面** | 任务管理器私有工作集 |
 | 二进制增量 | UI 相关 ≤ 1.5 MB（含三语字符串表；字体不内嵌） | `ls -l build/go-nx.exe` 对比 |
 | 新增第三方模块 | 0 | `go.mod` diff |
 
@@ -91,7 +91,7 @@ B–F 的判断是【推断】，没有在本项目里做过基准；只有 A �
 - **矢量路径**：`ebiten/vector`，用来把图标路径栅格化。
 - **窗口与光标**：`SetFullscreen`、`SetCursorMode`、`SetCursorShape`、`Monitor().DeviceScaleFactor()`。
 - **延迟**：quic-go 的 `Conn.ConnectionStats().SmoothedRTT`。
-- **按需渲染**：`ebiten.ScheduleFrame()` 配合 `FPSModeVsyncOffMinimum`。**注意：这个模式在 v2.5 起被标为 Deprecated**（v2.10.5 里仍存在），官方推荐的替代是 `SetScreenClearedEveryFrame(false)` + 没变化就跳过 `Draw`（模块附带 `examples/skipdraw`）。后者省 GPU，但 `Update` 仍按 TPS 运行。所以 U0 要验证：（a）弃用的模式在 v2.10.5 + Windows 上是否仍然正常；（b）不行时，低 TPS + 跳过 `Draw` 能否达到预算。
+- **按需渲染**：`ebiten.ScheduleFrame()` 配合 `FPSModeVsyncOffMinimum`。**注意：这个模式在 v2.5 起被标为 Deprecated**（v2.10.5 里仍存在），官方推荐的替代是 `SetScreenClearedEveryFrame(false)` + 没变化就跳过 `Draw`（模块附带 `examples/skipdraw`）。后者省 GPU，但 `Update` 仍按 TPS 运行。**【U0 结果】** （a）弃用的模式在 v2.10.5 上**仍然正常**，Windows/DirectX 和 Linux/OpenGL 都是：不请求时 0 帧 / 秒、0% CPU，每次 `ScheduleFrame()` 恰好引出一帧，延迟 1–2 ms；（b）降级方案（低 TPS + 跳过 `Draw`）也可用但**主循环仍按 60 次 / 秒调用 `Draw`**，Windows runner 上 0–2% CPU，Linux 软件 GL 上 2.5%，达不到最小模式的零。**决定：按需渲染用 `FPSModeVsyncOffMinimum` + `ScheduleFrame()`，封装在一处，降级方案保留。** 该模式下"新的输入"也会触发帧，所以只需在没有输入但画面要变时（连接状态、tile 到达、动画）调用。详见 `ui-baseline.md` ②。
 
 ### 4.3 字体策略（三语 + 内存）
 
@@ -105,7 +105,7 @@ B–F 的判断是【推断】，没有在本项目里做过基准；只有 A �
 | 兜底 | Go Regular | 已内嵌 |
 
 - **定位文件**：读注册表 `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts`（以及同名的 `HKCU` 键，覆盖按用户安装的字体）把字体名映射到文件，找不到再拼 `%WINDIR%\Fonts`。用 `golang.org/x/sys/windows/registry`（`x/sys` 已在模块图里，变成直接 import，不新增模块）。
-- **内存**：中文、韩文字体文件都是 MB 级【推断，U0 记录实际大小】。一律用 `*os.File` 打开后传给 `NewGoTextFaceSource`，**禁止 `io.ReadAll` / `bytes.Reader`**。
+- **内存**：**【U0 实测】** `windows-latest` 上 `segoeui.ttf` 0.9 MB、`msyh.ttc` 18.8 MB（2 个面）、`malgun.ttf` 12.8 MB，三者都在 `C:\Windows\Fonts`。一律用 `*os.File` 打开后传给 `NewGoTextFaceSource`（集合用 `NewGoTextFaceSourcesFromCollection`），**禁止 `io.ReadAll` / `bytes.Reader`**——实测从字节解析留下的更多（YaHei 94 MB 对 37 MB；面越多差得越大）。但**文件句柄加载留在堆里的也是文件大小的 1.5–2.2 倍**（YaHei 37 MB，Malgun 28 MB，Segoe 2.6 MB），且 `.ttc` 的每个面都会被解析一遍、无法只取一个。所以**一次只常驻界面语言对应的那一个 CJK 字体**，在后台 goroutine 里加载（YaHei 约 100 ms）。
 - **按需加载**：启动只加载界面语言对应的主字体 + 内嵌兜底；其余语言的字体在第一次遇到它们独有的字符时再加载（比如中文界面里出现韩文设备名）。判断用 `unicode.Is(unicode.Hangul, r)`、`unicode.Han` 等，不扫描全文。
 - **回退链**（`MultiFace` 取第一个含该字形的字体）：
 
@@ -440,15 +440,15 @@ cmd/go-nx/  只做接线：把主机状态、会话、更新器接到 screen
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
-| 按需渲染用的 `FPSModeVsyncOffMinimum` 已弃用 | 未来 Ebiten 版本可能移除；当前是否仍生效待验证 | U0 先验证；降级方案是低 TPS + 跳过 `Draw`；把调度封装在一处 |
+| 按需渲染用的 `FPSModeVsyncOffMinimum` 已弃用 | 未来 Ebiten 版本可能移除 | **U0 已验证在 v2.10.5 上两平台都正常**；降级方案是低 TPS + 跳过 `Draw`（已验证可用，空闲略高）；把调度封装在一处 |
 | `exp/textinput` 是实验性 API | Ebiten 升级时可能改动 | 所有调用集中在 `text/` 的一个适配文件；锁定 Ebiten 版本；退路是只接受已提交字符 + 粘贴 |
-| Ebiten 看不到 한/영、한자键 | 韩文用户无法用物理键切换远端输入法 | 工具条按钮发送 VK；"发送文本"绕开输入法；U0 在装有韩文输入法的机器上实测 |
+| Ebiten 看不到 한/영、한자键 | 韩文用户无法用物理键切换远端输入法 | **U0 已证实**：注入 VK_HANGUL / VK_HANJA 在 Ebiten 里没有任何键事件也没有字符。工具条按钮发送 VK；"发送文本"绕开输入法；经现有注入路径能否切换远端输入法需装有韩文输入法的远端（H29，用户自行执行） |
 | 韩文输入法的实测需要在 PC 上添加韩文输入法 | 会改动系统设置 | 标为"用户自行择机执行"（⚠），不由自动流程做 |
 | Ebiten 源码里没有 UI Automation / `WM_GETOBJECT` | 屏幕阅读器读不到界面 | 明确写进已知限制；用键盘导航、焦点环、高对比度主题弥补；这是方案 D 的主要收益点 |
 | 自研控件长期维护成本 | 每加一种控件都要自己做 | 控件集刻意保持小（9.1 列的就是全部） |
-| 着色器在老 GPU / 远程桌面会话下失败 | 圆角和阴影不显示或窗口异常 | 同时准备不用着色器的九宫格圆角位图作为降级；U0 在 `windows-latest` 的软件渲染上跑一遍 |
+| 着色器在老 GPU / 远程桌面会话下失败 | 圆角和阴影不显示或窗口异常 | **U0 已在 `windows-latest` 的 DirectX 软件渲染（WARP）和 Linux/Mesa 上验证**：与公式逐像素比较最大差 1/255；真实老 GPU 和远程桌面会话待验证，同时准备不用着色器的九宫格圆角位图作为降级 |
 | 系统字体缺失（精简版 Windows） | CJK 显示缺字 | 回退到内嵌字体并记日志；英文界面始终可用 |
-| 字体文件很大 | 内存占用、启动变慢 | `*os.File` 按需读取 + 按需加载，U0 量真实数字 |
+| 字体文件很大 | 内存占用、启动变慢 | **U0 实测**：YaHei 18.8 MB → 堆里 37 MB，Malgun 12.8 → 28 MB（见 4.3）。一次只常驻界面语言那一个，后台加载；预算已据此修改 |
 | 韩文译文质量 | 用词生硬或错误 | 母语者校对是发布门槛，不是可选项 |
 | 工作量大 | 与路线图其他阶段竞争 | 分阶段发布，每个阶段独立可用；旧界面保留到对等 |
 
@@ -458,7 +458,7 @@ cmd/go-nx/  只做接线：把主机状态、会话、更新器接到 screen
 
 | 阶段 | 内容 | 退出条件 |
 |---|---|---|
-| **U0 基线与技术验证**（不改界面） | ① 空闲 CPU、首帧时间、内存、tile 上传耗时（你的 PC + `windows-latest`）；② `ScheduleFrame` 在 v2.10.5 上是否按预期；③ 三种字体是否存在、大小、用 `*os.File` 打开的内存与耗时、`MultiFace` 渲染三语样例；④ `exp/textinput` 在中文、韩文输入法下的预编辑、候选窗位置、提交，以及**会话中本地 IME 关闭时按键是否原样转发**；⑤ VK_HANGUL / VK_HANJA 经现有注入路径能否切换远端输入法（需要装有韩文输入法的远端，⚠ 用户自行执行）；⑥ SDF 着色器在 DirectX 后端的表现；⑦ Linux CI 上截图是否可行。输出 `docs/ui-baseline.md` | 每项有数字或明确结论；任何一项不通过，先改方案再往下 |
+| **U0 基线与技术验证**（不改界面）**【已完成 2026-10-28，`ui-baseline.md`；④⑤ 的输入法部分和用户 PC 上的数字待 H29】** | ① 空闲 CPU、首帧时间、内存、tile 上传耗时（你的 PC + `windows-latest`）；② `ScheduleFrame` 在 v2.10.5 上是否按预期；③ 三种字体是否存在、大小、用 `*os.File` 打开的内存与耗时、`MultiFace` 渲染三语样例；④ `exp/textinput` 在中文、韩文输入法下的预编辑、候选窗位置、提交，以及**会话中本地 IME 关闭时按键是否原样转发**；⑤ VK_HANGUL / VK_HANJA 经现有注入路径能否切换远端输入法（需要装有韩文输入法的远端，⚠ 用户自行执行）；⑥ SDF 着色器在 DirectX 后端的表现；⑦ Linux CI 上截图是否可行。输出 `docs/ui-baseline.md` | 每项有数字或明确结论；任何一项不通过，先改方案再往下 |
 | **U1 令牌、绘制原语、三语基础** | `theme`、`i18n`（三语字符串表、语言选择、具名占位符）、`text`（字体定位 / 按需加载 / 回退链、UAX#14 断行、字素簇截断）、`gfx`（圆角 / 阴影着色器、图标图集）、缩放；`tools/uipreview` 生成第一批三语金样 | 原语截图测试通过；`Wrap` / `Truncate` 的三语测试通过；绘制基准达标 |
 | **U2 布局与控件** | `layout`、`widget`（含基于 `Composer` 的 TextField）、焦点与键盘导航、命中测试 | 纯 Go 单测全绿；控件截图金样（三语） |
 | **U3 功能对等** | 本机、设备、首次连接核对页，一一对应现有行为；删除旧 `internal/ui`（可保留一个版本的 `-classic-ui` 开关） | `ACCEPTANCE.md` 里 H13–H19 在新界面上全部通过 |
@@ -485,4 +485,4 @@ cmd/go-nx/  只做接线：把主机状态、会话、更新器接到 screen
 
 1. 第 10 节 B 层里哪些要做：**设备在线状态**、**"停止共享"开关**、**断线自动重连**、**韩文输入法键**？（RTT 和帧率几乎免费，建议直接做。）
 2. 第 10 节 C 层的**"发送文本"**依赖路线图阶段 2/3，对中文、韩文用户价值最大。要不要把阶段 2（协议规范与版本协商）排在 UI 实现之前？
-3. 什么时候启动 U0 技术验证？（其中第 ⑤ 项需要一台装有韩文输入法的远端。）
+3. ~~什么时候启动 U0 技术验证？~~ **已做**（`ui-baseline.md`）。仍待用户：⑤ 的远端韩文输入法实测、输入法开启时 `exp/textinput` 的预编辑与候选窗、用户 PC 上真实 GPU 的空闲 CPU / 内存 / 首帧数字（`ACCEPTANCE.md` H29）。

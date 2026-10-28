@@ -25,6 +25,18 @@ scripts/ship.sh --dry-run "..."                  # 只看会升到哪个版本�
 `ship.sh` 依次：预检（在 `main`、工作区干净、不落后于远端、新 versionCode 大于线上已发布的最大值）→ 升 `VERSION` 并提交 `Release X.Y.Z` → 推送 → **等这个提交的 CI 通过**（失败或 15 分钟没结束就不发布）→ `release.sh` 构建并发布 → 用 `relhub check` 验证旧版本被提供新版、新版本是最新。
 发布只是把新版本放到线上；已安装的 go-nx 只有在用户点了 `Restart to update to vX` 之后才会换成新版，不会自动重启。
 
+## 其他产物（不发布）
+
+`go-nx.exe` 是**唯一**发布到 release-publish 的产物。仓库里还有别的程序：
+
+| 产物 | 作用 | 怎么得到 |
+|---|---|---|
+| `nx-host.exe` | 无界面主机（sidecar），契约 `nx-host.md` | `build.sh` / `scripts/artifacts.sh` 一起构建，在 `build/` |
+| `nx-probe.exe` | 验收探针 | 同上 |
+| `go-nx-core.aar` | 手机端核心（`mobile`），契约 `mobile.md` | `scripts/build-aar.sh`；需要 Android SDK/NDK，**本机没有，未构建过** |
+
+`scripts/artifacts.sh` 同时写 `build/SHA256SUMS` 和 `build/artifacts.json`（版本、提交、工作树是否干净、Go 版本、构建参数、每个文件的大小和哈希），`scripts/artifacts.sh --verify` 用空缓存构建两次并比较哈希（同一台机器上字节相同）。`nx-host.exe` / `nx-probe.exe` 是否也作为单独的应用发布到 release-publish，留待决定；版本与契约的对应在 `compat-matrix.md`。
+
 ## 手动发布一个新版本
 
 1. 改 `VERSION`（`MAJOR.MINOR.PATCH`，minor 和 patch 都必须小于 100）。

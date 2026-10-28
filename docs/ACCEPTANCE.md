@@ -36,6 +36,8 @@
 
 **这些结果不覆盖**：真实显卡 / 物理显示器、DPI 缩放、多显示器、鼠标指针像素、光标闪烁（肉眼观察）、锁屏 / UAC。对应 H4 / H5 在 §3 里改为"部分覆盖"。
 
+**U0 在 runner 上又得到的**（`ui-baseline.md`；每次 CI 运行都重跑并保留报告）：runner 上 Ebiten 用 **DirectX（软件渲染）** 跑得起来；`segoeui.ttf`、`msyh.ttc`、`malgun.ttf` 都在 `C:\Windows\Fonts`；`SendInput` 注入到 Ebiten 窗口的按键、Unicode 文本到达（`hello한中`），VK_HANGUL / VK_HANJA 没有键事件；自更新要的"运行中的 exe 可以改名、备份副本是活进程的映像所以删不掉"在真 Windows 上成立（`TestReplaceOfARunningExe`）；`nx-host` 与 `nx-probe` 作为两个进程的完整流程在真 Windows 上通过。
+
 ## 2. 自更新（internal/update）
 
 已被单测覆盖（2026-10-28 加固后；每条都做过变异检查——故意改坏实现，对应测试确实失败）：签名被他钥拒绝、下载被篡改丢弃、强制更新、`dev` 版本被拒、内置公钥可解析；**更低版本的 manifest 不当作更新**；**错 app / platform / channel 的合法签名 manifest 被拒（`invalid_argument`）且不下载**；**截断 / 超长下载不可安装**；**`.part` 续传（Range `bytes=8-`）**与**陈旧 `.part`（等长 / 更短 / 更长）下次检查自愈**；**`Install` 重验**（改一个字节 / 截断 / 追加 / 删除 → 拒绝、删除候选、状态 `Failed`、重新下载后可装）；**重复与并发 `Install` 只装一次且不动备份**；`Install` 进行中 `Status` 不阻塞；缺新版本 / 缺 exe / 新版本是目录时**什么都不改**（包括更早的 `.old`）；改名被占用时重试后成功；一直装不上则放回旧版本；连放回也失败时错误信息给出 `.old` 路径与改回的方法；只读目录（非特权 Unix）；`New` 拒绝 `.old` / `.new` 路径；`Recover` 的三种情形；`.old` 在首次延迟之后才清理。
@@ -76,6 +78,7 @@
 | H26 | 被打断的更新可恢复 | 关闭 go-nx；在资源管理器里把 `go-nx.exe` 改名为 `go-nx.exe.old`（模拟两次改名之间被打断）；双击 `go-nx.exe.old` | 它应启动，并在资源管理器里变回 `go-nx.exe`；`go-nx.log` 有 `an earlier update was interrupted; restored ...`；此后更新器正常工作 | 待验证（`Recover` 有单测，真实 Windows 上"进程改自己的名字"由 CI 的 `TestARunningBackupCopyTakesTheRealNameBack` 覆盖） |
 | H27 | AAR 构建与 Android 联调 | 装好 Android SDK/NDK 与 `gomobile` 后 `scripts/build-aar.sh`；集成到手机 App，扫码 / 输入指纹和配对码连接一台主机 | 构建是否成功；画面颜色（应用交换红蓝并置 alpha=255）；触摸移动 / 点击 / 滚动 / 文本；松开按钮时主机指针是否停在原地 | 待验证（本机没有 Android 工具链；Java API 已由 `--check-api` 固定） |
 | H28 ⚠ | `nx-host` 在真实 Windows 桌面上 | `nx-host.exe -listen 127.0.0.1:7000 -pair`，另一个窗口 `nx-probe -addr 127.0.0.1:7000 -fingerprint <ready.identity> -code <pairing.code> -input`。**`-input` 会真的动鼠标、在屏幕中央点击、滚轮、按 A 并输入文字到当前获得焦点的窗口**——先打开一个空记事本 | 画面能收到；`inputs: 8 sent, 8 receipts`；记事本里出现 `go-nx probe 你好`；`nx-host` 退出码 0 | 待验证（`-test-mode` 的完整流程已在 CI 验证；真实 GDI / `SendInput` 在 `nx-host` 里没跑过） |
+| H29 | U0 在你的 PC 上（真实 GPU、输入法） | ① 在你的 PC 上运行 `go run ./tools/u0 all -seconds 60 -png u0.png -out u0.json`（会开一个小窗口，约 3 分钟；`input` 一项会往窗口里注入按键，所以运行时别动键盘）；② 若装有中文 / 韩文输入法：写一个临时用例或直接用 Ebiten 的 `examples/textinput`，用输入法打几个词，看预编辑文本、候选窗位置、提交；③ 在一台装有韩文输入法的远端上，用现有注入路径发 VK_HANGUL（0x15）/ VK_HANJA（0x19），看远端输入法是否切换 | 真实 GPU 上的空闲 CPU（60 s）、首帧时间、空窗口的私有内存、tile 上传、着色器是否通过；输入法开启时 `exp/textinput` 的行为；会话里本地输入法关闭后按键是否仍原样转发；VK 是否切换远端输入法 | 待验证（`windows-latest` 软件渲染上已全部跑过，见 `ui-baseline.md`；这一项补真实硬件和输入法） |
 
 ## 4. 已知缺陷与风险
 
