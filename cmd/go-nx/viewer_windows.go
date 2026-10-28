@@ -230,8 +230,13 @@ func (s *session) update(vp ui.Rect, input bool) {
 			s.action(proto.Input{Kind: proto.KindMouseUp, X: x, Y: y, Arg: id})
 		}
 	}
-	if _, dy := ebiten.Wheel(); dy != 0 && inside {
-		s.action(proto.Input{Kind: proto.KindWheel, X: x, Y: y, Arg: int32(dy * 120)})
+	if dx, dy := ebiten.Wheel(); inside {
+		if dy != 0 {
+			s.action(proto.Input{Kind: proto.KindWheel, X: x, Y: y, Arg: int32(dy * 120)})
+		}
+		if dx != 0 { // tilt wheels and touchpads; a host that does not know it just answers Failed
+			s.action(proto.Input{Kind: proto.KindWheelH, X: x, Y: y, Arg: int32(dx * 120)})
+		}
 	}
 	for k, code := range vk {
 		switch {

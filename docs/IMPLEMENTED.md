@@ -36,7 +36,7 @@
 | 流划分 | 已实现 | 一条双向控制流（Hello/Ack/Input/Receipt）+ 每帧一条主机发起的单向流。**没有** S0/S1/S2/S4 分流 | `internal/proto/proto.go:3-6,18-24` |
 | 对恶意主机的上限 | 已实现（2026-10-28） | 公布的帧尺寸 ≤ 16384 px/边、≤ 2²⁵ 像素，否则结束会话（`proto.ErrFrameSize`）；单个更新流 ≤ 约 138 MiB，超出结束会话；调色板 RLE 展开前校验；raw tile 的 deflate 最多读 size+1 字节；每帧记录数 ≤ tile 数；更新流 15 s 无数据即放弃；主机自己的屏幕超出上限时 `Serve` 直接报错 | `proto.go`（`MaxFrameDim`、`ValidFrameSize`）、`client.go`（`stallReader`）、`tile.go`（`decodePalette`、`Decode`）、`host.go` |
 | 版本/能力协商 | **未实现** | Hello 只有 `type, pwLen, password`；未知消息类型直接结束会话 | `proto.go:18,98-137` |
-| 输入种类 | 已实现 | 鼠标移动/按下/抬起、竖直滚轮、按键按下/抬起（Windows VK，`0x100` 位表示扩展键）。**没有**横向滚轮、X 键、Unicode 文本 | `proto.go:28-33` |
+| 输入种类 | 已实现 | 鼠标移动/按下/抬起、竖直滚轮、**横向滚轮**（`KindWheelH`）、按键按下/抬起（Windows VK，`0x100` 位表示扩展键）、**Unicode 文本**（`MsgText`，主机用 `KEYEVENTF_UNICODE` 注入，与键盘布局和输入法状态无关，单条 ≤ 1024 字节 UTF-8，非法 UTF-8 被替换为 U+FFFD）。后两项（2026-10-28）是 NightDesk 客户端已经在发的 v0 扩展，线上字节有逐字节向量测试；文本与其他输入一样有 opID 去重和回执，并且只对当前活动会话生效。**没有** X 键。老版本主机不认识 `MsgText`，收到会直接结束会话，所以只能发给确知支持的主机（见协议版本协商） | `internal/proto`、`internal/remote/{host,input,client}.go`、`internal/inject` |
 | opId 与去重 | 已实现 | `u64` opId，主机保留最近 1024 个；opId=0（鼠标移动、按键自动重复）不去重也无回执。**不是** UUID，无 `clientTs` | `proto.go:178`、`host.go:210` |
 | 回执状态 | 部分 | 只有 Executed / Failed；没有 Accepted / Timeout | `proto.go:38-39` |
 | 未确认提示 | 已实现 | 3 s 没收到回执只提示"不确定"，不自动重试 | `viewer_windows.go:30,170` |

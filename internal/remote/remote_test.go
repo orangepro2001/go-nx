@@ -63,8 +63,23 @@ func (s *fakeSource) paint(x, y int, v byte) {
 }
 
 type fakeInjector struct {
-	mu   sync.Mutex
-	seen []proto.Input
+	mu    sync.Mutex
+	seen  []proto.Input
+	texts []string
+}
+
+// InjectText makes fakeInjector a TextInjector.
+func (i *fakeInjector) InjectText(s string) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.texts = append(i.texts, s)
+	return nil
+}
+
+func (i *fakeInjector) typed() []string {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return append([]string(nil), i.texts...)
 }
 
 func (i *fakeInjector) Inject(in proto.Input) error {

@@ -1,6 +1,5 @@
 //go:build windows
 
-// Package inject performs mouse and keyboard input on the local desktop.
 package inject
 
 import (
@@ -29,10 +28,12 @@ const (
 	mouseMiddleDown = 0x0020
 	mouseMiddleUp   = 0x0040
 	mouseWheel      = 0x0800
+	mouseHWheel     = 0x1000
 	mouseAbsolute   = 0x8000
 
 	keyExtended = 0x0001
 	keyUp       = 0x0002
+	keyUnicode  = 0x0004
 )
 
 type mouseInput struct {
@@ -91,6 +92,8 @@ func (j *Injector) Inject(in proto.Input) error {
 		return j.mouse(in, f, 0)
 	case proto.KindWheel:
 		return j.mouse(in, mouseWheel, uint32(in.Arg))
+	case proto.KindWheelH:
+		return j.mouse(in, mouseHWheel, uint32(in.Arg))
 	case proto.KindKeyDown, proto.KindKeyUp:
 		// Arg: virtual-key code in the low byte, 0x100 set for an extended key.
 		return key(uint16(in.Arg&0xFF), in.Arg&0x100 != 0, in.Kind == proto.KindKeyUp)
@@ -114,6 +117,25 @@ func (j *Injector) mouse(in proto.Input, flags, data uint32) error {
 		n = 1
 	}
 	return send(unsafe.Pointer(&ev[0]), n, unsafe.Sizeof(ev[0]))
+}
+
+// InjectText types text as literal Unicode with KEYEVENTF_UNICODE, so it does not
+// depend on the keyboard layout or on whether an input method is active: each
+// UTF-16 unit is sent as a key down and a key up. Long text goes in chunks that
+// never split a surrogate pair.
+func (j *Injector) InjectText(text string) error {
+	for _, piece := range splitUnits(textUnits(text), textChunk) {
+		ev := make([]keyEvent, 0, 2*len(piece))
+		for _, u := range piece {
+			ev = append(ev,
+				keyEvent{typ: inputKeyboard, ki: keybdInput{scan: u, flags: keyUnicode}},
+				keyEvent{typ: inputKeyboard, ki: keybdInput{scan: u, flags: keyUnicode | keyUp}})
+		}
+		if err := send(unsafe.Pointer(&ev[0]), len(ev), unsafe.Sizeof(ev[0])); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func key(vk uint16, ext, up bool) error {

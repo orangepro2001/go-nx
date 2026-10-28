@@ -71,6 +71,20 @@ func (c *Client) SendInput(in proto.Input) error {
 	return proto.WriteInput(c.ctrl, in)
 }
 
+// SendText asks the host to type text, as literal Unicode and independent of any
+// input method active on the host. opID must be non-zero so the result comes
+// back as a receipt; text longer than proto.MaxTextLen bytes is refused, so split
+// it at a character boundary first. A host that predates this message ends the
+// session when it arrives, so call it only for a host known to support it.
+func (c *Client) SendText(opID uint64, text string) error {
+	if opID == 0 {
+		return errors.New("remote: text needs a non-zero op id to be acknowledged")
+	}
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	return proto.WriteText(c.ctrl, opID, text)
+}
+
 // Run receives screen updates and receipts until the connection ends.
 // onFrame is called synchronously after each update is applied to the frame it
 // is given, with the rectangles that update changed; the frame must not be

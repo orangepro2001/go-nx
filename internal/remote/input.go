@@ -83,6 +83,22 @@ func (s *sessionInputState) Inject(in proto.Input) error {
 	return nil
 }
 
+// InjectText types text through the host's injector, if it can, on behalf of the
+// active session only.
+func (s *sessionInputState) InjectText(text string) error {
+	c := s.controller
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.active != s {
+		return errors.New("remote: input session is not active")
+	}
+	t, ok := c.inj.(TextInjector)
+	if !ok {
+		return errTextUnsupported
+	}
+	return t.InjectText(text)
+}
+
 // Release ends this session's ownership. A stale session cannot release input
 // that a newer authenticated connection has since pressed.
 func (s *sessionInputState) Release() error {

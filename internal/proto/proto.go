@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 )
 
@@ -18,7 +19,17 @@ const (
 	MsgHello byte = 1 // pwLen u8, password (may be empty)
 	MsgAck   byte = 2 // seq u32
 	MsgInput byte = 3 // opID u64, kind u8, x i32, y i32, arg i32
+
+	// MsgText commits literal Unicode text, bypassing the keyboard layout. It
+	// carries opID u64, byte length u16 and that many bytes of UTF-8. The host
+	// reports the result with a receipt like any other input. A v0 extension
+	// that the NightDesk clients already send; hosts built before it do not
+	// know the type and end the session, which is why v1 negotiates it.
+	MsgText byte = 4
 )
+
+// MaxTextLen is the largest MsgText payload accepted, in bytes.
+const MaxTextLen = 1024
 
 // Host -> client message types.
 const MsgReceipt byte = 0x81 // opID u64, status u8
@@ -28,9 +39,10 @@ const (
 	KindMouseMove byte = 1 // x, y in host pixels
 	KindMouseDown byte = 2 // arg: 0 left, 1 right, 2 middle
 	KindMouseUp   byte = 3
-	KindWheel     byte = 4 // arg: delta in 1/120 notches
+	KindWheel     byte = 4 // arg: vertical delta in 1/120 notches (positive is away from the user)
 	KindKeyDown   byte = 5 // arg: Windows virtual-key code
 	KindKeyUp     byte = 6
+	KindWheelH    byte = 7 // arg: horizontal delta in 1/120 notches (positive is right)
 )
 
 // Receipt statuses.
@@ -53,6 +65,8 @@ type Msg struct {
 	Password string // MsgHello
 	Seq      uint32 // MsgAck
 	Input    Input  // MsgInput
+	OpID     uint64 // MsgText
+	Text     string // MsgText
 }
 
 func WriteHello(w io.Writer, password string) error {
@@ -76,6 +90,20 @@ func WriteInput(w io.Writer, in Input) error {
 	binary.LittleEndian.PutUint32(b[10:], uint32(in.X))
 	binary.LittleEndian.PutUint32(b[14:], uint32(in.Y))
 	binary.LittleEndian.PutUint32(b[18:], uint32(in.Arg))
+	return write(w, b)
+}
+
+// WriteText sends text as one MsgText. The caller splits anything longer than
+// MaxTextLen bytes, at a character boundary.
+func WriteText(w io.Writer, opID uint64, text string) error {
+	if len(text) > MaxTextLen {
+		return errors.New("proto: text too long")
+	}
+	b := make([]byte, 11+len(text))
+	b[0] = MsgText
+	binary.LittleEndian.PutUint64(b[1:], opID)
+	binary.LittleEndian.PutUint16(b[9:], uint16(len(text)))
+	copy(b[11:], text)
 	return write(w, b)
 }
 
@@ -130,6 +158,22 @@ func ReadMsg(r io.Reader) (Msg, error) {
 			Y:    int32(binary.LittleEndian.Uint32(b[13:])),
 			Arg:  int32(binary.LittleEndian.Uint32(b[17:])),
 		}
+	case MsgText:
+		var h [10]byte
+		if _, err := io.ReadFull(r, h[:]); err != nil {
+			return m, err
+		}
+		m.OpID = binary.LittleEndian.Uint64(h[0:])
+		n := int(binary.LittleEndian.Uint16(h[8:]))
+		if n > MaxTextLen {
+			return m, errors.New("proto: text too long")
+		}
+		b := make([]byte, n)
+		if _, err := io.ReadFull(r, b); err != nil {
+			return m, err
+		}
+		// Whatever the peer sent, the injector only ever sees valid UTF-8.
+		m.Text = strings.ToValidUTF8(string(b), "\uFFFD")
 	default:
 		return m, errors.New("proto: unknown message type")
 	}

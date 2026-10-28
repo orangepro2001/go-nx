@@ -3,18 +3,20 @@
 package inject
 
 import (
-	"os"
+	"slices"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/orangepro2001/go-nx/internal/proto"
+	"github.com/orangepro2001/go-nx/internal/wintest"
 )
 
 // These tests move the real cursor and press real keys, so they only run when
 // GO_NX_WINDOWS_E2E=1 (set by the CI windows job). On a machine someone is
-// working at, leave it unset.
-const e2eEnv = "GO_NX_WINDOWS_E2E"
+// working at, leave it unset. See package wintest.
 
 var (
 	getCursorPos     = user32.NewProc("GetCursorPos")
@@ -32,9 +34,7 @@ const (
 
 func screenSize(t *testing.T) (int, int) {
 	t.Helper()
-	if os.Getenv(e2eEnv) != "1" {
-		t.Skipf("set %s=1 to run: this test moves the real cursor and presses keys", e2eEnv)
-	}
+	wintest.Skip(t)
 	setDPIAware.Call() // make GetCursorPos report physical pixels like the host does
 	w, _, _ := getSystemMetrics.Call(0)
 	h, _, _ := getSystemMetrics.Call(1)
@@ -156,5 +156,87 @@ func TestUnknownKindFails(t *testing.T) {
 	// No desktop needed: the kind is rejected before any Win32 call.
 	if err := New(100, 100).Inject(proto.Input{Kind: 99}); err == nil {
 		t.Error("unknown input kind was accepted")
+	}
+}
+
+// Text typed with InjectText must arrive in the focused window as the same UTF-16
+// units, whatever the keyboard layout or input method: Latin with accents, Hangul,
+// Han, and an astral character that travels as a surrogate pair.
+func TestInjectTextReachesTheFocusedWindow(t *testing.T) {
+	wintest.Skip(t)
+	w, h := screenSize(t)
+	win := wintest.New(t, wintest.Options{X: 0, Y: 0, W: 200, H: 120, R: 30, G: 30, B: 30})
+	defer win.Close()
+	win.Focus(t)
+	win.Reset()
+
+	text := "aé 한국어 中文 😀 end"
+	if err := New(w, h).InjectText(text); err != nil {
+		t.Fatal(err)
+	}
+	win.Pump(500 * time.Millisecond)
+	want := utf16.Encode([]rune(text))
+	if got := win.Chars(); !slices.Equal(got, want) {
+		t.Fatalf("window received %x\nwant %x", got, want)
+	}
+}
+
+// The longest text the protocol allows is typed whole and in order, which means
+// more than one SendInput call.
+func TestInjectTextOfMaximumLength(t *testing.T) {
+	wintest.Skip(t)
+	w, h := screenSize(t)
+	win := wintest.New(t, wintest.Options{X: 0, Y: 0, W: 200, H: 120, R: 30, G: 30, B: 30})
+	defer win.Close()
+	win.Focus(t)
+	win.Reset()
+
+	text := strings.Repeat("ab한😀", proto.MaxTextLen/len("ab한😀"))
+	if err := New(w, h).InjectText(text); err != nil {
+		t.Fatal(err)
+	}
+	win.Pump(1500 * time.Millisecond)
+	want := utf16.Encode([]rune(text))
+	got := win.Chars()
+	if !slices.Equal(got, want) {
+		t.Fatalf("received %d units, want %d (first difference at %d)", len(got), len(want), firstDiff(got, want))
+	}
+}
+
+func firstDiff(a, b []uint16) int {
+	for i := 0; i < min(len(a), len(b)); i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return min(len(a), len(b))
+}
+
+// A horizontal wheel notch reaches the window under the pointer with the right
+// sign, and a vertical one is not confused with it.
+func TestHorizontalWheelIsDelivered(t *testing.T) {
+	wintest.Skip(t)
+	w, h := screenSize(t)
+	win := wintest.New(t, wintest.Options{X: 0, Y: 0, W: 300, H: 200, R: 30, G: 30, B: 30})
+	defer win.Close()
+	win.Focus(t)
+	win.Reset()
+
+	j := New(w, h)
+	for _, in := range []proto.Input{
+		{Kind: proto.KindWheelH, X: 100, Y: 100, Arg: 120},
+		{Kind: proto.KindWheelH, X: 100, Y: 100, Arg: -120},
+		{Kind: proto.KindWheel, X: 100, Y: 100, Arg: 240},
+	} {
+		if err := j.Inject(in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	win.Pump(500 * time.Millisecond)
+	if got, want := win.WheelDeltas(wintest.WMMouseHWheel), []int{120, -120}; !slices.Equal(got, want) {
+		t.Errorf("horizontal wheel deltas = %v, want %v", got, want)
+	}
+	if got, want := win.WheelDeltas(wintest.WMMouseWheel), []int{240}; !slices.Equal(got, want) {
+		t.Errorf("vertical wheel deltas = %v, want %v", got, want)
 	}
 }

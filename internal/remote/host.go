@@ -29,6 +29,35 @@ type Injector interface {
 	Inject(in proto.Input) error
 }
 
+// TextInjector is implemented by an Injector that can also type literal Unicode
+// text, independent of the keyboard layout and of any input method that is
+// active. A host whose Injector lacks it answers text with a failed receipt.
+type TextInjector interface {
+	InjectText(text string) error
+}
+
+// errTextUnsupported is the failure behind a Failed receipt for text sent to a
+// host that cannot type it.
+var errTextUnsupported = errors.New("remote: this host cannot type text")
+
+// inputSink is what the control loop feeds: key, mouse and wheel input, and text.
+type inputSink interface {
+	Inject(in proto.Input) error
+	InjectText(text string) error
+}
+
+// plainSink adapts an Injector that is not behind an InputController.
+type plainSink struct{ inj Injector }
+
+func (p plainSink) Inject(in proto.Input) error { return p.inj.Inject(in) }
+
+func (p plainSink) InjectText(text string) error {
+	if t, ok := p.inj.(TextInjector); ok {
+		return t.InjectText(text)
+	}
+	return errTextUnsupported
+}
+
 type Options struct {
 	FPS        int           // capture rate; default 10
 	AckTimeout time.Duration // base time to wait for a frame's ack; default 1s (see frameTimeout)
@@ -141,7 +170,7 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 		defer remove()
 	}
 
-	input := inj
+	var input inputSink = plainSink{inj}
 	var inputSession *sessionInputState
 	if opt.InputController != nil {
 		inputSession = opt.InputController.newSession()
@@ -238,7 +267,7 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 	}
 }
 
-func readControl(ctrl *quic.Stream, inj Injector, dd *proto.Dedup, lastAck *atomic.Uint32) error {
+func readControl(ctrl *quic.Stream, input inputSink, dd *proto.Dedup, lastAck *atomic.Uint32) error {
 	for {
 		m, err := proto.ReadMsg(ctrl)
 		if err != nil {
@@ -248,22 +277,33 @@ func readControl(ctrl *quic.Stream, inj Injector, dd *proto.Dedup, lastAck *atom
 		case proto.MsgAck:
 			lastAck.Store(m.Seq)
 		case proto.MsgInput:
-			in := m.Input
-			if in.OpID == 0 {
-				inj.Inject(in)
-				continue
+			if err := runOp(ctrl, dd, m.Input.OpID, func() error { return input.Inject(m.Input) }); err != nil {
+				return err
 			}
-			status, seen := dd.Get(in.OpID)
-			if !seen {
-				status = proto.StatusExecuted
-				if inj.Inject(in) != nil {
-					status = proto.StatusFailed
-				}
-				dd.Put(in.OpID, status)
-			}
-			if err := proto.WriteReceipt(ctrl, in.OpID, status); err != nil {
+		case proto.MsgText:
+			if err := runOp(ctrl, dd, m.OpID, func() error { return input.InjectText(m.Text) }); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+// runOp runs one input operation exactly once per opID and reports the result.
+// opID 0 is fire-and-forget: it runs every time and gets no receipt. A repeated
+// opID (a retry after a lost receipt) is not run again; its first receipt is
+// sent again.
+func runOp(ctrl *quic.Stream, dd *proto.Dedup, opID uint64, run func() error) error {
+	if opID == 0 {
+		_ = run()
+		return nil
+	}
+	status, seen := dd.Get(opID)
+	if !seen {
+		status = proto.StatusExecuted
+		if run() != nil {
+			status = proto.StatusFailed
+		}
+		dd.Put(opID, status)
+	}
+	return proto.WriteReceipt(ctrl, opID, status)
 }

@@ -12,7 +12,7 @@ go-nx 是单一上游。NightDesk 的 `native/` 里的通用修复在这里**重
 | ID | 内容 | 来源（快照内） | go-nx 位置 | 线上 / API 影响 | 状态 |
 |---|---|---|---|---|---|
 | B0 | 模块路径改为 `github.com/orangepro2001/go-nx` | — | `go.mod` 与全部 import | 无 | ☑ |
-| B1 | `MsgText`(=4)、`KindWheelH`(=7)、`MaxTextLen`；主机 `TextInjector`；Windows `InjectText`（`KEYEVENTF_UNICODE`，64 单元分块）与横向滚轮 | `internal/proto`、`internal/remote/host.go`、`internal/inject` | 同名包 | v0 加两种消息；已发布的 NightDesk 客户端依赖它 | ☐ |
+| B1 | `MsgText`(=4)、`KindWheelH`(=7)、`MaxTextLen`；主机 `TextInjector`；Windows `InjectText`（`KEYEVENTF_UNICODE`，64 单元分块）与横向滚轮 | `internal/proto`、`internal/remote/host.go`、`internal/inject` | 同名包；与快照的差异：文本走 `InputController`（被顶替的旧会话不能输入文字）、不拆代理对、非法 UTF-8 替换、统一的 `runOp` | v0 加两种消息；已发布的 NightDesk 客户端依赖它 | ☑ |
 | B2 | 多显示器枚举与选择（`Displays`/`Open(selector)`）、per-monitor DPI v2、帧内光标合成、`internal/cursor` 几何、`NewDisplay` + `MOUSEEVENTF_VIRTUALDESK`、主机侧分辨率变化 | `internal/capture`、`internal/cursor`、`internal/inject` | 同名包 | 无线上变化（帧头本来就带尺寸） | ☐ |
 | B3 | `pinnedClientTLS`（按指纹固定，用于二维码配对）、`FPSFn`（输入活跃时临时升帧）、`OnInput`/`OnFrame` 回调 | `internal/remote/{tls,host}.go` | 同名包 | 无 | ☐ |
 | B4 | 合成画面源、仅记录输入的注入器、`nx-probe`、`logsink` | `internal/{synth,probe,logsink}`、`cmd/nx-probe` | 同名包 | 无 | ☐ |
