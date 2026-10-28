@@ -180,6 +180,7 @@ type Screen struct {
 	pointerSource func() (handle uintptr, x, y int32, ok bool)
 	pointerNote   atomic.Value // string: why the last attempt to draw it did nothing, for logs and tests
 	noBlt         atomic.Bool  // leave CAPTUREBLT out (layered windows then may not be captured)
+	switched      bool         // Use chose another monitor: the next Refresh reports a change
 }
 
 // NewScreen opens the primary monitor.
@@ -290,7 +291,8 @@ func (s *Screen) Refresh() (bool, error) {
 	if !found {
 		return false, fmt.Errorf("capture: monitor %s is gone", s.display.Device)
 	}
-	changed := d.X != s.display.X || d.Y != s.display.Y || d.W != s.display.W || d.H != s.display.H
+	changed := d.X != s.display.X || d.Y != s.display.Y || d.W != s.display.W || d.H != s.display.H || s.switched
+	s.switched = false
 	if changed || s.screen == 0 {
 		s.release()
 		if err := s.build(d); err != nil {
@@ -306,6 +308,39 @@ func (s *Screen) Refresh() (bool, error) {
 	}
 	s.display = d
 	return false, nil
+}
+
+// Use makes the screen capture another monitor, chosen as Open chooses one. The session
+// that streams it learns of the change at its next Refresh, as of any change of geometry.
+func (s *Screen) Use(selector string) error {
+	all, err := Displays()
+	if err != nil {
+		return err
+	}
+	d, err := SelectDisplay(all, selector)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.display
+	s.release()
+	if err := s.build(d); err != nil {
+		s.release()
+		if s.build(old) != nil { // back to the old monitor, if it is still there
+			s.release()
+		}
+		return err
+	}
+	s.switched = true
+	return nil
+}
+
+// Device is the device name of the monitor being captured (\\.\DISPLAY1).
+func (s *Screen) Device() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.display.Device
 }
 
 // SetCursorVisible makes later grabs include the system pointer, which BitBlt
