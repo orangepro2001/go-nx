@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -29,7 +30,7 @@ type fakeHost struct {
 }
 
 func newFakeHost() *fakeHost {
-	return &fakeHost{info: HostInfo{Addrs: []string{"192.168.1.5"}, Port: 7000, ID: "9f3a1c77d0e24b58", RequireAuth: true}}
+	return &fakeHost{info: HostInfo{Addrs: []string{"192.168.1.5"}, Port: 7000, ID: "9f3a1c77d0e24b58", RequireAuth: true, Lockout: true}}
 }
 
 func (h *fakeHost) Info() HostInfo  { h.mu.Lock(); defer h.mu.Unlock(); return h.info }
@@ -56,6 +57,12 @@ func (h *fakeHost) SetRequireAuth(on bool) int {
 	}
 	h.record("open")
 	return 0
+}
+func (h *fakeHost) SetLockout(on bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.info.Lockout = on
+	h.record(fmt.Sprintf("lockout:%v", on))
 }
 func (h *fakeHost) Password() string { return h.password }
 func (h *fakeHost) SetPassword(p string) {

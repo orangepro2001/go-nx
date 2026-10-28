@@ -108,6 +108,11 @@ func (a *App) errorCard(t *tab) kit.Node {
 			a.labelled(tr.T(i18n.KeySessPwAgain), a.secretField(&kit.TextField{ID: id, Value: &t.password, MaxLen: 64, OnSubmit: func() { a.startDial(t) }})),
 			a.caption(tr.T(i18n.KeySessPwHint)),
 		)
+		// Which host refused, so the person can tell whether it is the one whose page they
+		// are looking at: another program on the same address would have another ID.
+		if fp, ok := a.cfg.Connector.Pinned(t.addr); ok {
+			kids = append(kids, a.caption(tr.T(i18n.KeySessPeerID, "id", groupID(shortID(fp)))))
+		}
 		a.wantFocus = id
 	}
 	return a.card("", p.Bad, append(kids, buttons)...)

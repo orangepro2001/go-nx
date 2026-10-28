@@ -83,6 +83,42 @@ func TestLockoutAfterRepeatedFailures(t *testing.T) {
 	check(t, p, "aa", "s3cret", Allowed)
 }
 
+func TestLockoutCanBeTurnedOff(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.SetPassword("s3cret")
+	if !p.Lockout() {
+		t.Fatal("a new policy must lock out a source that keeps guessing")
+	}
+	for i := 0; i < maxFailures; i++ {
+		check(t, p, "aa", "nope", BadPassword)
+	}
+	check(t, p, "aa", "s3cret", Locked)
+	p.SetLockout(false)
+	check(t, p, "aa", "s3cret", Allowed) // turning it off frees a source that is locked out now
+	for i := 0; i < 3*maxFailures; i++ {
+		check(t, p, "aa", "nope", BadPassword) // and nobody is locked out any more
+	}
+	check(t, p, "aa", "s3cret", Allowed)
+	p.SetLockout(true)
+	for i := 0; i < maxFailures; i++ {
+		check(t, p, "aa", "nope", BadPassword) // failures while it was off do not count
+	}
+	check(t, p, "aa", "s3cret", Locked)
+}
+
+func TestWrongCodesStillCloseThePairingWithoutLockout(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.SetLockout(false)
+	p.OpenPairing("123456", time.Minute)
+	for i := 0; i < maxPairFails; i++ {
+		checkFrom(t, p, "10.0.0.66:1", "000000", BadPassword) // one source, never locked out
+	}
+	if p.PairingLeft() != 0 {
+		t.Fatal("guessing the code must still close the pairing window")
+	}
+	checkFrom(t, p, "10.0.0.66:1", "123456", Untrusted)
+}
+
 func TestPairedDeviceIgnoresLockout(t *testing.T) {
 	p, _ := newPolicy(t)
 	p.SetPassword("s3cret")

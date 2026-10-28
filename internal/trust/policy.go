@@ -57,11 +57,13 @@ func (v Verdict) Admitted() bool { return v == Allowed || v == AllowedOpen }
 //  3. otherwise the optional password, if the host has one, must match.
 //
 // Wrong passwords are counted; after five the host refuses password attempts for
-// a minute so a short password cannot be guessed over the network.
+// a minute so a short password cannot be guessed over the network, unless
+// SetLockout(false) turns that off.
 type Policy struct {
 	mu          sync.Mutex
 	trusted     *Store
 	requireAuth bool
+	lockout     bool // a source that keeps guessing wrong is locked out for a while
 	password    string
 	pairUntil   time.Time
 	pairCode    string             // if set, the code a new device must enter to pair
@@ -73,7 +75,25 @@ type Policy struct {
 // NewPolicy starts strict: until SetRequireAuth(false) is called, a viewer must
 // be paired or offer the right password or pairing code.
 func NewPolicy(trusted *Store) *Policy {
-	return &Policy{trusted: trusted, requireAuth: true, now: time.Now, sources: map[string]*source{}}
+	return &Policy{trusted: trusted, requireAuth: true, lockout: true, now: time.Now, sources: map[string]*source{}}
+}
+
+// Lockout reports whether a source that guesses wrong too often is locked out.
+func (p *Policy) Lockout() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lockout
+}
+
+// SetLockout turns the lockout after wrong passwords on or off. Either way the
+// sources counted so far are forgotten, so turning it off lets in at once a device
+// that is locked out now. Wrong pairing codes still close the pairing window
+// (maxPairFails): that is what keeps a code from being guessed.
+func (p *Policy) SetLockout(on bool) {
+	p.mu.Lock()
+	p.lockout = on
+	clear(p.sources)
+	p.mu.Unlock()
 }
 
 // RequireAuth reports whether strict mode is on.
@@ -197,15 +217,15 @@ func (p *Policy) openLocked(password string) (v Verdict, pair bool) {
 	case pairing && p.pairCode == "":
 		p.closePairingLocked() // one device per pairing
 		return Allowed, true
-	case pairing && password != "" && codeMatches(password, p.pairCode):
+	case pairing && password != "" && CodeMatches(password, p.pairCode):
 		p.closePairingLocked()
 		return Allowed, true
 	}
 	return AllowedOpen, false
 }
 
-// codeMatches reports whether offered is the pairing code as a person types it.
-func codeMatches(offered, code string) bool {
+// CodeMatches reports whether offered is the pairing code as a person types it.
+func CodeMatches(offered, code string) bool {
 	return subtle.ConstantTimeCompare([]byte(asCode(offered)), []byte(code)) == 1
 }
 
@@ -273,7 +293,7 @@ func (p *Policy) decideLocked(addr, password string) (v Verdict, pair bool) {
 	if src != nil && now.Before(src.lockedUntil) {
 		return Locked, false
 	}
-	if coded && codeMatches(password, p.pairCode) {
+	if coded && CodeMatches(password, p.pairCode) {
 		p.closePairingLocked()
 		delete(p.sources, key)
 		return Allowed, true
@@ -286,6 +306,9 @@ func (p *Policy) decideLocked(addr, password string) (v Verdict, pair bool) {
 		if p.pairFails++; p.pairFails >= maxPairFails {
 			p.closePairingLocked()
 		}
+	}
+	if !p.lockout {
+		return BadPassword, false
 	}
 	if src == nil {
 		p.makeRoom(now)

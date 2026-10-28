@@ -48,15 +48,28 @@ func (a *App) statusCard(info HostInfo) kit.Node {
 		addrs = strings.Join(info.Addrs, ", ")
 	}
 	line := tr.T(i18n.KeyPCAddressLine, "addresses", addrs, "port", info.Port)
-	return a.card("", kit.Color{},
+	dot, border := p.Good, kit.Color{}
+	if len(info.PortShared) > 0 {
+		dot, border = p.Warn, p.Warn
+	}
+	kids := []kit.Node{
 		&kit.Row{Gap: theme.S3, Align: kit.AlignCenter, Children: []kit.Node{
-			&kit.Dot{Color: p.Good, Size: 10},
+			&kit.Dot{Color: dot, Size: 10},
 			kit.Grow(1, &kit.Label{Text: tr.T(i18n.KeyPCSharing), Size: theme.SizeSub, Weight: text.Semibold}),
 		}},
 		&kit.Row{Gap: theme.S2, Align: kit.AlignCenter, Children: []kit.Node{
 			kit.Grow(1, &kit.Label{Text: line, Color: p.TextDim, Wrap: true}),
 			a.copyButton("pc.copy.addr", line),
 		}},
+	}
+	if len(info.PortShared) > 0 {
+		// Another program takes the connections to some of these addresses (see HostInfo).
+		kids = append(kids, &kit.Row{Gap: theme.S3, Align: kit.AlignStart, Children: []kit.Node{
+			&kit.IconNode{Icon: kit.IconWarning, Color: p.Warn},
+			kit.Grow(1, &kit.Label{Text: tr.T(i18n.KeyPCPortShared, "port", info.Port, "who", strings.Join(info.PortShared, "; ")), Wrap: true, Color: p.Warn}),
+		}})
+	}
+	return a.card("", border, append(kids,
 		&kit.Col{Gap: theme.S1, Align: kit.AlignStretch, Children: []kit.Node{
 			a.caption(tr.T(i18n.KeyPCIDTitle)),
 			&kit.Row{Gap: theme.S3, Align: kit.AlignCenter, Children: []kit.Node{
@@ -66,7 +79,7 @@ func (a *App) statusCard(info HostInfo) kit.Node {
 			}},
 			a.caption(tr.T(i18n.KeyPCIDHint)),
 		}},
-	)
+	)...)
 }
 
 func (a *App) securityCard(info HostInfo) kit.Node {
@@ -91,6 +104,11 @@ func (a *App) securityCard(info HostInfo) kit.Node {
 		}},
 		a.body(desc),
 		a.caption(tr.T(i18n.KeyModeSwitchNote)),
+		&kit.Row{Gap: theme.S3, Align: kit.AlignCenter, Children: []kit.Node{
+			&kit.Toggle{ID: "pc.lockout", On: info.Lockout, OnChange: func(on bool) { a.cfg.Host.SetLockout(on); a.ui.Invalidate() }},
+			kit.Grow(1, &kit.Label{Text: tr.T(i18n.KeyLockout), Wrap: true}),
+		}},
+		a.caption(tr.T(i18n.KeyLockoutDesc)),
 	)
 }
 

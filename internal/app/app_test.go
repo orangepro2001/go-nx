@@ -121,13 +121,18 @@ func TestAKnownHostGoesStraightThroughAndFailuresOfferRetry(t *testing.T) {
 // another, already cleared and with the keyboard, and Enter sends what is typed there.
 func TestARefusedPasswordIsAskedForAgainNotResent(t *testing.T) {
 	r := newRig(t)
-	r.conn.pinned["10.0.0.5:7000"] = "x"
+	r.conn.pinned["10.0.0.5:7000"] = "28aff5aca80377e726755252f750d491196c7abad0393bc8b9015fc5c257047a"
 	r.conn.refuse = &quic.ApplicationError{ErrorCode: remote.CloseBadPassword, Remote: true}
 	r.a.quickAddr, r.a.quickPw = "10.0.0.5", "123465"
 	r.a.connectQuick()
 	r.wait("the refusal", func() bool { return r.a.tabs[0].state == tabError })
-	if !r.has("Wrong password or pairing code.") || !r.has("Password or pairing code") || !r.has("A pairing code works once") {
+	if !r.has("Wrong password or pairing code.") || !r.has("Password or pairing code") || !r.has("set on the PC you are connecting to") {
 		t.Fatalf("the card does not ask for another password: %q", r.texts())
+	}
+	// The ID of the host that refused, to compare with the one on the host's This PC page:
+	// another program answering on the address has another one.
+	if !r.has("Host ID 28AF F5AC A803 77E7.") {
+		t.Errorf("the card does not say which host refused: %q", r.texts())
 	}
 	if r.a.tabs[0].password != "" {
 		t.Errorf("the refused password %q is still there to be sent again", r.a.tabs[0].password)
@@ -204,6 +209,42 @@ func TestPasswordFieldsCanShowWhatWasTyped(t *testing.T) {
 	r.step(kit.Input{})
 	if !r.has("Show") {
 		t.Errorf("no Show button on This PC: %q", r.texts())
+	}
+}
+
+func TestTheLockoutCanBeTurnedOffOnThisPC(t *testing.T) {
+	r := newRig(t)
+	r.a.ShowPage(PageThisPC)
+	r.step(kit.Input{})
+	if !r.has("Lock out a device after 5 wrong tries") {
+		t.Fatalf("no lockout switch on This PC: %q", r.texts())
+	}
+	r.pressButton("pc.lockout")
+	if !r.host.called("lockout:false") || r.host.Info().Lockout {
+		t.Fatalf("the switch did not turn the lockout off: %v", r.host.calls)
+	}
+	r.pressButton("pc.lockout")
+	if !r.host.called("lockout:true") || !r.host.Info().Lockout {
+		t.Errorf("the switch did not turn the lockout back on: %v", r.host.calls)
+	}
+}
+
+// Another host bound to one of this PC's addresses takes every connection sent there, and
+// nothing on this page applies to them: the page must say so, naming the program.
+func TestAnotherProgramOnTheHostingPortIsShown(t *testing.T) {
+	r := newRig(t)
+	r.a.ShowPage(PageThisPC)
+	r.step(kit.Input{})
+	if r.has("Another program") {
+		t.Fatalf("a warning with nobody else on the port: %q", r.texts())
+	}
+	r.host.mu.Lock()
+	r.host.info.PortShared = []string{"nx-host.exe (process 4120) on 100.109.77.29"}
+	r.host.mu.Unlock()
+	r.a.Invalidate() // what the host's change notice does
+	r.step(kit.Input{})
+	if !r.has("nx-host.exe (process 4120) on 100.109.77.29") || !r.has("do not apply to them") {
+		t.Errorf("the page does not name the other program: %q", r.texts())
 	}
 }
 
@@ -696,9 +737,10 @@ func TestTabsCanBeRenamedAndClosed(t *testing.T) {
 	if r.a.tabs[0].title != "Press 4" || r.store.All()[0].Name != "Press 4" {
 		t.Errorf("renamed to %q / %q: the saved device is renamed with its tab", r.a.tabs[0].title, r.store.All()[0].Name)
 	}
+	first := r.a.tabs[0].sess.cl.(*fakeConn) // the two tabs dial at once: conns is in either order
 	r.a.closeTab(1)
-	if len(r.a.tabs) != 1 || !r.conn.conns[0].closed {
-		t.Errorf("tabs %d, first connection closed: %v", len(r.a.tabs), r.conn.conns[0].closed)
+	if len(r.a.tabs) != 1 || !first.closed {
+		t.Errorf("tabs %d, first connection closed: %v", len(r.a.tabs), first.closed)
 	}
 	if r.a.active != 0 && r.a.active != 1 {
 		t.Errorf("active %d", r.a.active)

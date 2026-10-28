@@ -44,6 +44,11 @@ type HostInfo struct {
 	PairingLeft        time.Duration
 	PairingCode        string // the code a new device enters as its password; "" when pairing is closed
 	RequireAuth        bool   // strict mode
+	Lockout            bool   // a device that keeps entering wrong passwords is locked out for a while
+	// PortShared names the other programs bound to the hosting port and the addresses they
+	// hold ("nx-host.exe (process 4120) on 100.109.77.29"): connections to those addresses
+	// reach them, not this PC's host.
+	PortShared []string
 }
 
 // PairedDevice is a device that is paired with this PC.
@@ -61,6 +66,8 @@ type HostService interface {
 	// SetRequireAuth switches between strict (true) and open mode and returns how many
 	// sessions that were let in without verification were ended by going strict.
 	SetRequireAuth(on bool) (ended int)
+	// SetLockout turns the lockout after wrong passwords on or off.
+	SetLockout(on bool)
 	Password() string
 	SetPassword(string)
 	Paired() []PairedDevice

@@ -65,14 +65,14 @@
 | 认证默认值 | **默认开启**（2026-10-28 改；此前默认关闭） | `settings.json` 里从没设置过 `require_auth` 的主机现在要求配对或密码；设置过 `"0"`/`"1"` 的保持原值（`trust.Store.Bool`）。关闭时（界面会警告）任何能连到端口的人都被允许。**这是行为变更**：升级后未配对的控制端会被拒绝，需要先配对 | `cmd/go-nx/host_windows.go`（`requireAuthDefault`）、`internal/trust` |
 | 证书/指纹 | 已实现 | 自签证书；客户端 TOFU 固定主机指纹，变化则 `ErrHostChanged` 硬失败；服务端要求任意客户端证书，信任由 `Policy` 决定 | `tls.go:57,72-91` |
 | 配对 | 部分（2026-10-28 改） | 主机上点按钮开 5 分钟窗口（0.7.1 起，此前 2 分钟）并显示**一次性 6 位码**；新设备把它填在 Password 里才配对，码里的空格、短横、全角数字不影响（0.7.1），成功即关窗，全体来源累计错 10 次也关窗。无码模式（`StartPairing`）保留给不经界面的流程。**仍没有** 指纹核对、本机确认弹窗 | `internal/trust/policy.go`（`OpenPairing`、`NewPairingCode`）、`cmd/go-nx/host_windows.go`、`internal/app/pages_pc.go` |
-| 密码 | 部分 | 可选。错误次数**按来源 IP** 计（端口不算）：10 分钟内错 5 次锁该来源 1 分钟，连续锁定每次加倍，上限 15 分钟；安静 10 分钟后失败计数清零；输对一次清除该来源的记录；来源表上限 1024 条。配对过的设备不受影响。（2026-10-28 改；此前是全局 1 分钟/5 次、不衰减） | `internal/trust/policy.go` |
+| 密码 | 部分 | 可选。错误次数**按来源 IP** 计（端口不算）：10 分钟内错 5 次锁该来源 1 分钟，连续锁定每次加倍，上限 15 分钟；安静 10 分钟后失败计数清零；输对一次清除该来源的记录；来源表上限 1024 条。配对过的设备不受影响。（2026-10-28 改；此前是全局 1 分钟/5 次、不衰减）"本机"页可以关掉锁定（设置 `lockout`，默认开；关掉时清空现有锁定；配对码错 10 次仍作废）（0.7.2） | `internal/trust/policy.go` |
 | 未认证连接上限 | 已实现（2026-10-28） | `remote.Gate`：等待认证的连接总数 ≤ 16、同一 IP ≤ 4，超出的以 `CloseBusy`(6) 拒绝；Hello 10 s 内未到也会放弃。QUIC 握手本身的并发未限制 | `internal/remote/gate.go`、`host.go`、`cmd/go-nx/host_windows.go` |
 | 首次连接 | 已处理（2026-10-28；此前密码在校验指纹前就发出） | 控制端界面连接未固定的主机时，先 `remote.Probe`（只握手取指纹，不发 Hello、不写任何东西），标签页显示该主机自报的 16 位 ID，让用户与主机主页的 `ID:` 比对，按 Enter 才 `PinHost` 并正常连接，Esc / 关闭标签 / 2 分钟无应答都算拒绝；密码或配对码只会发给已固定的身份。**不经界面的调用者**（`remote.Dial` 直接用）仍是首次信任。界面部分未在 Windows 上跑过（ACCEPTANCE H17） | `internal/remote/tls.go`（`Probe`、`PinHost`）、`internal/app/{tabs,session_ui}.go` |
 | 撤销已信任设备 | 已实现（0.7.0；此前只能全部忘记） | `Store.Delete/Clear/Keys`、`Policy.Revoke/RevokeAll`；"本机"页列出已配对的设备（地址、配对时间），可逐个"忘记"或"全部忘记"（都先确认），并以 `CloseRevoked`(5) 断开正在控制的那台 | `internal/trust`、`internal/app/pages_pc.go`、`cmd/go-nx/host_windows.go` |
 | 忘记主机身份（控制端） | 已实现（2026-10-28） | 主机证书变化时仍硬失败（`ErrHostChanged`）；用户确认后在该标签页点"忘记已保存的身份"（旧界面是 `Ctrl+F`），再点"重试"连接并重新固定。此前提示的"手改 hosts.json"在程序运行时无效 | `remote.ForgetHost`、`internal/app/session_ui.go` |
 | 凭据存储 | **明文** | 主机密码在 `settings.json`；连接密码在 `connections.json`；`identity.pem` 私钥未加密；Windows 上 0600 无效 | `host_windows.go:88-95`、`internal/profiles/profiles.go:12-17` |
 | 配置文件写入 | 已实现（2026-10-28） | `trusted/settings/hosts/connections.json` 与 `identity.pem` 经临时文件 + fsync + rename 原子替换；启动时读不懂的 JSON 被改名为 `<名>.corrupt-<时间>` 并以空状态继续，弹窗告知，而不是 `log.Fatal`。`identity.pem` 本身损坏仍是明确报错（自动重建会改变指纹、使所有配对失效）；读取失败（权限 / I/O）也仍报错 | `internal/fsutil`、`trust.OpenStoreRecovering`、`profiles.LoadRecovering`、`cmd/go-nx/main_windows.go` |
-| 监听范围 | 默认全接口；可限定（2026-10-28） | 默认 `":7000"`。新增 `-listen <IP[:端口]>`（只接受 IP 字面量，不接受主机名；`remote.ParseListen`），主页只显示该 IP。**还没有设置界面里的选项**，只能用命令行 | `internal/remote/tls.go`（`ParseListen`）、`cmd/go-nx/host_windows.go`、`main_windows.go` |
+| 监听范围 | 默认全接口；可限定（2026-10-28） | 默认 `":7000"`。新增 `-listen <IP[:端口]>`（只接受 IP 字面量，不接受主机名；`remote.ParseListen`），主页只显示该 IP。**还没有设置界面里的选项**，只能用命令行。主机每 10 s 检查同一 UDP 端口上有没有别的进程绑定（例如另一个程序单独绑了 tailnet IP，会截走发往那个地址的连接），有就在"本机"页警告并写明程序名、进程号和地址（0.7.2，`portSharers`） | `internal/remote/tls.go`（`ParseListen`）、`cmd/go-nx/host_windows.go`、`main_windows.go` |
 | 权限分级 | 不做 | 配对成功即可操作 | `minimal-plan.md` |
 | 审计日志 | 部分 | 只有 `go-nx.log` 里的连接/拒绝行 | `internal/logging` |
 

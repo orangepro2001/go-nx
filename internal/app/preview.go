@@ -56,7 +56,7 @@ func SceneNames() []string {
 // directory for the saved devices.
 func NewPreview(fonts Fonts, lang i18n.Lang, dark bool, w, h int, scale float64, dir string) (*Preview, error) {
 	p := &Preview{
-		host: &previewHost{info: HostInfo{Addrs: []string{"192.168.1.5", "10.0.0.7"}, Port: 7000, ID: "9f3a1c77d0e24b58", RequireAuth: true}},
+		host: &previewHost{info: HostInfo{Addrs: []string{"192.168.1.5", "10.0.0.7"}, Port: 7000, ID: "9f3a1c77d0e24b58", RequireAuth: true, Lockout: true}},
 		upd:  &previewUpdater{},
 		logs: logging.New(),
 		now:  time.Date(2026, 10, 28, 9, 30, 0, 0, time.Local),
@@ -130,6 +130,10 @@ var previewScenes = []previewScene{
 		p.host.info.PairingLeft, p.host.info.PairingCode = 102*time.Second, "123456"
 	}},
 	{"this-pc-open", func(p *Preview) { p.App.page = PageThisPC; p.host.info.RequireAuth = false }},
+	{"this-pc-shared", func(p *Preview) {
+		p.App.page = PageThisPC
+		p.host.info.PortShared = []string{`nx-host.exe (process 4120) on 100.109.77.29`}
+	}},
 	{"this-pc-unavailable", func(p *Preview) {
 		p.App.page = PageThisPC
 		p.host.info.Err = "UDP port 7000 is already in use by another program"
@@ -187,6 +191,7 @@ func (h *previewHost) Info() HostInfo             { return h.info }
 func (h *previewHost) StartPairing()              {}
 func (h *previewHost) ClosePairing()              {}
 func (h *previewHost) SetRequireAuth(on bool) int { h.info.RequireAuth = on; return 0 }
+func (h *previewHost) SetLockout(on bool)         { h.info.Lockout = on }
 func (h *previewHost) Password() string           { return "" }
 func (h *previewHost) SetPassword(string)         {}
 func (h *previewHost) Paired() []PairedDevice     { return h.paired }
@@ -227,7 +232,12 @@ func (c *previewClip) Set(s string) { c.s = s }
 // previewConnector never connects.
 type previewConnector struct{}
 
-func (previewConnector) Pinned(string) (string, bool) { return "", false }
+func (previewConnector) Pinned(addr string) (string, bool) {
+	if addr == "100.109.77.29:7000" { // the host of the error-refused scene
+		return "28aff5aca80377e726755252f750d491196c7abad0393bc8b9015fc5c257047a", true
+	}
+	return "", false
+}
 func (previewConnector) Probe(context.Context, string) (string, error) {
 	return "", errors.New("preview")
 }

@@ -67,6 +67,7 @@ const (
 	KeyDevSaved
 	KeyPCSharing
 	KeyPCUnavailable
+	KeyPCPortShared
 	KeyPCAddressLine
 	KeyPCNoAddress
 	KeyPCIDTitle
@@ -78,6 +79,8 @@ const (
 	KeyModeStrictDesc
 	KeyModeOpenDesc
 	KeyModeSwitchNote
+	KeyLockout
+	KeyLockoutDesc
 	KeyModeOpenAskTitle
 	KeyModeOpenAskBody
 	KeyModeOpenAskYes
@@ -124,6 +127,7 @@ const (
 	KeySessPwHint
 	KeyShowPw
 	KeyHidePw
+	KeySessPeerID
 	KeySessForgotIdentity
 	KeySessForgetFailed
 	KeySessNewTab

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -118,11 +119,19 @@ func messageBox(title, msg string) {
 	pMessageBox.Call(0, uintptr(unsafe.Pointer(m)), uintptr(unsafe.Pointer(t)), 0x40) // MB_ICONINFORMATION
 }
 
-// udpPortOwner returns the PID of the process bound to the local UDP port.
-func udpPortOwner(port int) (uint32, bool) {
+// udpSocket is a UDP socket bound on this PC: the local address and the process holding it.
+type udpSocket struct {
+	IP  net.IP // 0.0.0.0 or :: for every address
+	PID uint32
+}
+
+// udpSockets lists the sockets bound to the local UDP port, IPv4 and IPv6.
+func udpSockets(port int) []udpSocket {
 	const udpTableOwnerPID = 1
-	// Row layouts of MIB_UDPROW_OWNER_PID (IPv4) and MIB_UDP6ROW_OWNER_PID (IPv6).
-	for _, fam := range []struct{ af, rowSize, portOff, pidOff int }{{2, 12, 4, 8}, {23, 28, 20, 24}} {
+	var out []udpSocket
+	// Row layouts of MIB_UDPROW_OWNER_PID (IPv4) and MIB_UDP6ROW_OWNER_PID (IPv6); both start
+	// with the address in network byte order.
+	for _, fam := range []struct{ af, rowSize, addrLen, portOff, pidOff int }{{2, 12, 4, 4, 8}, {23, 28, 16, 20, 24}} {
 		var size uint32
 		pGetExtUDPTable.Call(0, uintptr(unsafe.Pointer(&size)), 0, uintptr(fam.af), udpTableOwnerPID, 0)
 		if size == 0 {
@@ -138,11 +147,44 @@ func udpPortOwner(port int) (uint32, bool) {
 			row := buf[4+i*fam.rowSize:]
 			p := binary.LittleEndian.Uint32(row[fam.portOff:])
 			if int(p&0xFF)<<8|int(p>>8&0xFF) == port { // stored in network byte order
-				return binary.LittleEndian.Uint32(row[fam.pidOff:]), true
+				ip := net.IP(append([]byte(nil), row[:fam.addrLen]...))
+				out = append(out, udpSocket{IP: ip, PID: binary.LittleEndian.Uint32(row[fam.pidOff:])})
 			}
 		}
 	}
+	return out
+}
+
+// udpPortOwner returns the PID of a process bound to the local UDP port.
+func udpPortOwner(port int) (uint32, bool) {
+	if s := udpSockets(port); len(s) > 0 {
+		return s[0].PID, true
+	}
 	return 0, false
+}
+
+// portSharers describes the other processes bound to the UDP port this one listens on, such
+// as "nx-host.exe (process 4120) on 100.109.77.29". Windows lets a program bind one address
+// on a port that another holds for every address, and hands the packets for that address to
+// the more specific binding: the connections sent there never reach this program.
+func portSharers(port int) []string {
+	self := uint32(os.Getpid())
+	var out []string
+	for _, s := range udpSockets(port) {
+		if s.PID == self {
+			continue
+		}
+		out = append(out, processName(s.PID)+" on "+s.IP.String())
+	}
+	return out
+}
+
+// processName is "name.exe (process 4120)", or "process 4120" when the image cannot be read.
+func processName(pid uint32) string {
+	if img := processImage(pid); img != "" {
+		return fmt.Sprintf("%s (process %d)", filepath.Base(img), pid)
+	}
+	return fmt.Sprintf("process %d", pid)
 }
 
 // processImage returns the full path of the executable of process pid.
@@ -172,10 +214,7 @@ func explainListenError(err error, port int) string {
 		if pid == uint32(os.Getpid()) {
 			return fmt.Sprintf("UDP port %d is already in use by this go-nx", port)
 		}
-		who = fmt.Sprintf("process %d", pid)
-		if img := processImage(pid); img != "" {
-			who = fmt.Sprintf("%s (process %d)", filepath.Base(img), pid)
-		}
+		who = processName(pid)
 	}
 	return fmt.Sprintf("UDP port %d is in use by %s. End the older go-nx / host.exe in Task Manager, or start with -port.", port, who)
 }

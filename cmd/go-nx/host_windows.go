@@ -8,7 +8,9 @@ import (
 	"errors"
 	"log"
 	"net"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,6 +43,7 @@ type hostState struct {
 	CtrlOpen   bool   // it was let in without verification (open mode)
 	Rejected   string // address of the last device turned away
 	RejectedBy app.Reason
+	Sharers    []string // other programs bound to the hosting port, which take the connections to their addresses
 	policy     *trust.Policy
 	trusted    *trust.Store
 	settings   *trust.Store
@@ -148,7 +151,32 @@ func (h *hostState) Info() app.HostInfo {
 		Controller: h.Controller, ControllerVerified: h.Controller != "" && !h.CtrlOpen,
 		Rejected: h.Rejected, RejectedWhy: h.RejectedBy,
 		PairingLeft: h.policy.PairingLeft(), PairingCode: h.policy.PairingCode(),
-		RequireAuth: h.requireAuth(),
+		RequireAuth: h.requireAuth(), Lockout: h.policy.Lockout(), PortShared: h.Sharers,
+	}
+}
+
+// portCheckEvery is how often the host looks for another program bound to its port.
+const portCheckEvery = 10 * time.Second
+
+// watchPort keeps Sharers up to date. Another host started with one of this PC's addresses
+// (a second go-nx, an nx-host) gets every connection sent to that address, and nothing here
+// (pairing, open mode, the password) applies to them: the person has to be told.
+func (h *hostState) watchPort(port int) {
+	for {
+		s := portSharers(port)
+		h.mu.Lock()
+		same := slices.Equal(s, h.Sharers)
+		h.Sharers = s
+		h.mu.Unlock()
+		if !same {
+			if len(s) > 0 {
+				log.Printf("UDP port %d is also bound by %s: connections to those addresses go there, not here", port, strings.Join(s, ", "))
+			} else {
+				log.Printf("UDP port %d is no longer bound by another program", port)
+			}
+			h.changed()
+		}
+		time.Sleep(portCheckEvery)
 	}
 }
 
@@ -183,6 +211,26 @@ func (h *hostState) SetRequireAuth(on bool) (dropped int) {
 	log.Printf("mode: %s (ended %d unverified session(s))", map[bool]string{true: "strict", false: "open"}[on], dropped)
 	h.changed()
 	return dropped
+}
+
+// SetLockout turns the lockout after wrong passwords on or off and saves the choice.
+// Turning it off also lets in at once a device that is locked out now.
+func (h *hostState) SetLockout(on bool) {
+	h.policy.SetLockout(on)
+	v := "0"
+	if on {
+		v = "1"
+	}
+	if err := h.settings.Set("lockout", v); err != nil {
+		log.Printf("could not save setting: %v", err)
+	}
+	h.mu.Lock()
+	if h.RejectedBy == app.ReasonLockedOut {
+		h.Rejected, h.RejectedBy = "", app.ReasonNone
+	}
+	h.mu.Unlock()
+	log.Printf("lockout after wrong passwords: %v", on)
+	h.changed()
 }
 
 func (h *hostState) Password() string {
@@ -269,6 +317,7 @@ func startHost(listen string, port int, rates remote.Rates, display string, laye
 	}
 	h.policy.SetPassword(h.Password())
 	h.policy.SetRequireAuth(h.requireAuth())
+	h.policy.SetLockout(h.settings.Bool("lockout", true))
 	t0 := time.Now()
 	if display == "" {
 		display, _ = h.settings.Get("display")
@@ -288,6 +337,7 @@ func startHost(listen string, port int, rates remote.Rates, display string, laye
 		return h
 	}
 	log.Printf("startup: QUIC listener ready in %dms", time.Since(t0).Milliseconds())
+	go h.watchPort(port)
 	w, ht := scr.Size()
 	log.Printf("hosting %dx%d on UDP %s", w, ht, bind)
 	inj := inject.New(w, ht)
