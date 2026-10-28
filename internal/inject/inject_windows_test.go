@@ -212,8 +212,11 @@ func firstDiff(a, b []uint16) int {
 	return min(len(a), len(b))
 }
 
-// A horizontal wheel notch reaches the window under the pointer with the right
-// sign, and a vertical one is not confused with it.
+// A horizontal wheel notch reaches the focused window with the right sign, and a
+// vertical one is not confused with it. Windows merges consecutive wheel messages
+// of one axis that are still in its queue by adding their deltas (+120 and -120
+// would arrive as one message of 0), so each is delivered before the next is
+// sent, and the values are chosen so that a merge could not hide a mistake.
 func TestHorizontalWheelIsDelivered(t *testing.T) {
 	wintest.Skip(t)
 	w, h := screenSize(t)
@@ -225,18 +228,18 @@ func TestHorizontalWheelIsDelivered(t *testing.T) {
 	j := New(w, h)
 	for _, in := range []proto.Input{
 		{Kind: proto.KindWheelH, X: 100, Y: 100, Arg: 120},
-		{Kind: proto.KindWheelH, X: 100, Y: 100, Arg: -120},
-		{Kind: proto.KindWheel, X: 100, Y: 100, Arg: 240},
+		{Kind: proto.KindWheelH, X: 100, Y: 100, Arg: -240},
+		{Kind: proto.KindWheel, X: 100, Y: 100, Arg: 360},
 	} {
 		if err := j.Inject(in); err != nil {
 			t.Fatal(err)
 		}
+		win.Pump(300 * time.Millisecond)
 	}
-	win.Pump(500 * time.Millisecond)
-	if got, want := win.WheelDeltas(wintest.WMMouseHWheel), []int{120, -120}; !slices.Equal(got, want) {
+	if got, want := win.WheelDeltas(wintest.WMMouseHWheel), []int{120, -240}; !slices.Equal(got, want) {
 		t.Errorf("horizontal wheel deltas = %v, want %v", got, want)
 	}
-	if got, want := win.WheelDeltas(wintest.WMMouseWheel), []int{240}; !slices.Equal(got, want) {
+	if got, want := win.WheelDeltas(wintest.WMMouseWheel), []int{360}; !slices.Equal(got, want) {
 		t.Errorf("vertical wheel deltas = %v, want %v", got, want)
 	}
 }

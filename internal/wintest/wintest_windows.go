@@ -25,36 +25,66 @@ import (
 // Env is the environment variable that turns the real-desktop tests on.
 const Env = "GO_NX_WINDOWS_E2E"
 
-// Skip skips the test unless real-desktop tests are enabled.
+// holding records the tests that hold the desktop, so Skip can be called more
+// than once in one test (helpers do).
+var holding sync.Map
+
+// Skip skips the test unless real-desktop tests are enabled. Otherwise it takes
+// the desktop for the rest of the test: go test runs packages in parallel, and
+// two tests that paint windows or move the cursor at the same time would see each
+// other's windows. The lock is a named semaphore, so it works across the separate
+// test processes of different packages, and is released when the test ends.
 func Skip(t *testing.T) {
 	t.Helper()
 	if os.Getenv(Env) != "1" {
 		t.Skipf("set %s=1 to run: this test paints on, or sends input to, the real desktop", Env)
 	}
+	if _, again := holding.LoadOrStore(t, true); again {
+		return // this test already holds the desktop; taking it twice would wait forever
+	}
+	t.Cleanup(func() { holding.Delete(t) })
+	name, _ := syscall.UTF16PtrFromString(`Local\go-nx-wintest-desktop`)
+	h, _, err := createSemaphore.Call(0, 1, 1, uintptr(unsafe.Pointer(name)))
+	if h == 0 {
+		t.Fatalf("wintest: CreateSemaphoreW: %v", err)
+	}
+	const waitObject0, timeoutMs = 0, 3 * 60 * 1000
+	if r, _, _ := waitForSingleObject.Call(h, timeoutMs); r != waitObject0 {
+		closeHandle.Call(h)
+		t.Fatalf("wintest: another real-desktop test held the desktop for over %d s (result %#x)", timeoutMs/1000, r)
+	}
+	t.Cleanup(func() {
+		releaseSemaphore.Call(h, 1, 0)
+		closeHandle.Call(h)
+	})
 }
 
 var (
-	user32           = syscall.NewLazyDLL("user32.dll")
-	gdi32            = syscall.NewLazyDLL("gdi32.dll")
-	kernel32         = syscall.NewLazyDLL("kernel32.dll")
-	getModuleHandle  = kernel32.NewProc("GetModuleHandleW")
-	registerClass    = user32.NewProc("RegisterClassExW")
-	unregisterClass  = user32.NewProc("UnregisterClassW")
-	createWindow     = user32.NewProc("CreateWindowExW")
-	destroyWindow    = user32.NewProc("DestroyWindow")
-	defWindowProc    = user32.NewProc("DefWindowProcW")
-	peekMessage      = user32.NewProc("PeekMessageW")
-	translateMessage = user32.NewProc("TranslateMessage")
-	dispatchMessage  = user32.NewProc("DispatchMessageW")
-	setLayeredAttr   = user32.NewProc("SetLayeredWindowAttributes")
-	setForeground    = user32.NewProc("SetForegroundWindow")
-	getForeground    = user32.NewProc("GetForegroundWindow")
-	setFocus         = user32.NewProc("SetFocus")
-	keybdEvent       = user32.NewProc("keybd_event")
-	getSystemMetrics = user32.NewProc("GetSystemMetrics")
-	setDPIAware      = user32.NewProc("SetProcessDPIAware")
-	createSolidBrush = gdi32.NewProc("CreateSolidBrush")
-	deleteObject     = gdi32.NewProc("DeleteObject")
+	user32              = syscall.NewLazyDLL("user32.dll")
+	gdi32               = syscall.NewLazyDLL("gdi32.dll")
+	kernel32            = syscall.NewLazyDLL("kernel32.dll")
+	getModuleHandle     = kernel32.NewProc("GetModuleHandleW")
+	registerClass       = user32.NewProc("RegisterClassExW")
+	unregisterClass     = user32.NewProc("UnregisterClassW")
+	createWindow        = user32.NewProc("CreateWindowExW")
+	destroyWindow       = user32.NewProc("DestroyWindow")
+	defWindowProc       = user32.NewProc("DefWindowProcW")
+	peekMessage         = user32.NewProc("PeekMessageW")
+	translateMessage    = user32.NewProc("TranslateMessage")
+	dispatchMessage     = user32.NewProc("DispatchMessageW")
+	setLayeredAttr      = user32.NewProc("SetLayeredWindowAttributes")
+	setForeground       = user32.NewProc("SetForegroundWindow")
+	getForeground       = user32.NewProc("GetForegroundWindow")
+	setFocus            = user32.NewProc("SetFocus")
+	keybdEvent          = user32.NewProc("keybd_event")
+	getSystemMetrics    = user32.NewProc("GetSystemMetrics")
+	setDPIAware         = user32.NewProc("SetProcessDPIAware")
+	createSemaphore     = kernel32.NewProc("CreateSemaphoreW")
+	waitForSingleObject = kernel32.NewProc("WaitForSingleObject")
+	releaseSemaphore    = kernel32.NewProc("ReleaseSemaphore")
+	closeHandle         = kernel32.NewProc("CloseHandle")
+	createSolidBrush    = gdi32.NewProc("CreateSolidBrush")
+	deleteObject        = gdi32.NewProc("DeleteObject")
 )
 
 // Window messages and styles used by the tests.

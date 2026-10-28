@@ -92,4 +92,5 @@ jobs:
       - name: real desktop smoke (capture, inject)
         env:
           GO_NX_WINDOWS_E2E: "1"
-        run: go test -count=1 -v ./internal/capture ./internal/inject
+        # -p 1 runs the packages one after the other: they share the desktop.
+        run: go test -count=1 -p 1 -v ./internal/capture ./internal/inject
