@@ -112,6 +112,7 @@ type rig struct {
 	recv    map[uint64]byte
 	served  chan error
 	dialErr error
+	addr    string // where the host listens
 }
 
 // start runs a host and connects a viewer. The host trusts the viewer's
@@ -132,7 +133,7 @@ func startWith(t *testing.T, opt Options, hostID, viewerID tls.Certificate, host
 	}
 	t.Cleanup(func() { ln.Close() })
 
-	r := &rig{src: newFakeSource(150, 90), inj: &fakeInjector{}, recv: map[uint64]byte{}, served: make(chan error, 1)}
+	r := &rig{src: newFakeSource(150, 90), inj: &fakeInjector{}, recv: map[uint64]byte{}, served: make(chan error, 1), addr: ln.Addr().String()}
 	if opt.Check == nil {
 		opt.Check = func(f, _, _ string) (trust.Verdict, error) {
 			if trustViewer && f == fp(viewerID) {
@@ -154,7 +155,7 @@ func startWith(t *testing.T, opt Options, hostID, viewerID tls.Certificate, host
 		r.served <- Serve(ctx, conn, r.src, r.inj, dd, opt)
 	}()
 
-	r.client, err = Dial(ctx, ln.Addr().String(), viewerID, hosts, "pw")
+	r.client, err = Dial(ctx, r.addr, viewerID, hosts, "pw")
 	if err != nil {
 		r.dialErr = err
 		return r
@@ -392,14 +393,29 @@ func TestHostPinnedAfterFirstConnection(t *testing.T) {
 		t.Fatal(r.dialErr)
 	}
 	r.waitView(t, nil)
-	if got, _ := hosts.Get("127.0.0.1"); got != fp(hostA) {
+	if got, _ := PinnedFingerprint(hosts, r.addr); got != fp(hostA) {
 		t.Fatalf("pinned %q, want host A's fingerprint", got)
 	}
-	// A different machine answering at the same address must be refused.
-	r2 := startWith(t, Options{}, hostB, viewerID, hosts, true, 0)
-	if r2.dialErr == nil || !strings.Contains(r2.dialErr.Error(), ErrHostChanged.Error()) {
-		t.Fatalf("dial to changed host = %v, want %q", r2.dialErr, ErrHostChanged)
+	// A different machine answering at an address where host A was met must be refused.
+	addr, _ := pinHost(t, hostB, viewerID)
+	if err := PinHost(hosts, addr, fp(hostA)); err != nil {
+		t.Fatal(err)
 	}
+	if err := dialOnce(t, addr, viewerID, hosts); err == nil || !strings.Contains(err.Error(), ErrHostChanged.Error()) {
+		t.Fatalf("dial to changed host = %v, want %q", err, ErrHostChanged)
+	}
+}
+
+// dialOnce connects to addr, checking the host against hosts, and hangs up.
+func dialOnce(t *testing.T, addr string, viewerID tls.Certificate, hosts *trust.Store) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, err := Dial(ctx, addr, viewerID, hosts, "")
+	if err == nil {
+		c.Close()
+	}
+	return err
 }
 
 func TestWrongPasswordReportedToViewer(t *testing.T) {
@@ -485,23 +501,51 @@ func TestLargeFirstFrameIsNotCancelledForever(t *testing.T) {
 func TestForgetHostLetsAChangedHostBePinnedAgain(t *testing.T) {
 	viewerID, hostA, hostB := identity(t), identity(t), identity(t)
 	hosts := hostsStore(t)
-	if r := startWith(t, Options{}, hostA, viewerID, hosts, true, 0); r.dialErr != nil {
-		t.Fatal(r.dialErr)
-	}
-	if r := startWith(t, Options{}, hostB, viewerID, hosts, true, 0); r.dialErr == nil {
-		t.Fatal("changed host was accepted before ForgetHost")
-	}
-	if err := ForgetHost(hosts, "127.0.0.1:7000"); err != nil { // the port is not part of the pin
+	addr, _ := pinHost(t, hostB, viewerID)
+	if err := PinHost(hosts, addr, fp(hostA)); err != nil { // host A was met at this address before
 		t.Fatal(err)
 	}
-	if _, ok := hosts.Get("127.0.0.1"); ok {
+	if err := dialOnce(t, addr, viewerID, hosts); err == nil {
+		t.Fatal("changed host was accepted before ForgetHost")
+	}
+	if err := ForgetHost(hosts, addr); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := PinnedFingerprint(hosts, addr); ok {
 		t.Fatal("pin still present after ForgetHost")
 	}
-	if r := startWith(t, Options{}, hostB, viewerID, hosts, true, 0); r.dialErr != nil {
-		t.Fatalf("dial after ForgetHost: %v", r.dialErr)
+	if err := dialOnce(t, addr, viewerID, hosts); err != nil {
+		t.Fatalf("dial after ForgetHost: %v", err)
 	}
-	if got, _ := hosts.Get("127.0.0.1"); got != fp(hostB) {
+	if got, _ := PinnedFingerprint(hosts, addr); got != fp(hostB) {
 		t.Fatalf("pinned %q, want host B's fingerprint", got)
+	}
+}
+
+// One PC can run two hosts on two ports (go-nx, and an nx-host started by another
+// program), each with its own identity: both are remembered, neither looks like the other
+// having changed. On the default port the pin stays under the IP alone, as it always was.
+func TestHostsOnTwoPortsOfOnePCKeepTheirOwnPins(t *testing.T) {
+	viewerID, hostA, hostB := identity(t), identity(t), identity(t)
+	hosts := hostsStore(t)
+	a := startWith(t, Options{}, hostA, viewerID, hosts, true, 0)
+	b := startWith(t, Options{}, hostB, viewerID, hosts, true, 0)
+	if a.dialErr != nil || b.dialErr != nil {
+		t.Fatalf("dial A: %v, dial B: %v", a.dialErr, b.dialErr)
+	}
+	if got, _ := PinnedFingerprint(hosts, a.addr); got != fp(hostA) {
+		t.Errorf("pin for %s is %q, want host A's", a.addr, got)
+	}
+	if got, _ := PinnedFingerprint(hosts, b.addr); got != fp(hostB) {
+		t.Errorf("pin for %s is %q, want host B's", b.addr, got)
+	}
+	for addr, want := range map[string]string{
+		"100.109.77.29:7000": "100.109.77.29", "100.109.77.29:7001": "100.109.77.29:7001",
+		"[fd7a::1]:7000": "fd7a::1", "[fd7a::1]:7001": "[fd7a::1]:7001", "100.109.77.29": "100.109.77.29",
+	} {
+		if got := pinKey(addr); got != want {
+			t.Errorf("pinKey(%q) = %q, want %q", addr, got, want)
+		}
 	}
 }
 

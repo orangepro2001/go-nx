@@ -56,7 +56,8 @@ func SceneNames() []string {
 // directory for the saved devices.
 func NewPreview(fonts Fonts, lang i18n.Lang, dark bool, w, h int, scale float64, dir string) (*Preview, error) {
 	p := &Preview{
-		host: &previewHost{info: HostInfo{Addrs: []string{"192.168.1.5", "10.0.0.7"}, Port: 7000, ID: "9f3a1c77d0e24b58", RequireAuth: true, Lockout: true}},
+		host: &previewHost{info: HostInfo{Addrs: []string{"192.168.1.5", "10.0.0.7"}, LocalIPs: []string{"192.168.1.5", "10.0.0.7", "100.109.77.29"},
+			Port: 7000, ID: "9f3a1c77d0e24b58", RequireAuth: true, Lockout: true}},
 		upd:  &previewUpdater{},
 		logs: logging.New(),
 		now:  time.Date(2026, 10, 28, 9, 30, 0, 0, time.Local),
@@ -139,6 +140,14 @@ var previewScenes = []previewScene{
 		p.host.info.Err = "UDP port 7000 is already in use by another program"
 	}},
 	{"settings", func(p *Preview) { p.App.page = PageSettings }},
+	{"settings-sharing", func(p *Preview) { p.App.page, p.App.setSection = PageSettings, setSharing }},
+	{"settings-network", func(p *Preview) {
+		p.App.page, p.App.setSection = PageSettings, setNetwork
+		p.host.info.ListenIP, p.host.info.Port, p.App.portText = "100.109.77.29", 7001, "7001"
+		p.App.netErr = p.App.tr.T(i18n.KeySetListenFailed, "error", "UDP port 7000 is in use by nx-host.exe (process 4120). Close that program, or choose another port in Settings > Network.")
+	}},
+	{"settings-session", func(p *Preview) { p.App.page, p.App.setSection = PageSettings, setSession }},
+	{"settings-about", func(p *Preview) { p.App.page, p.App.setSection = PageSettings, setAbout }},
 	{"logs", func(p *Preview) {
 		p.App.page = PageLogs
 		for i := 0; i < 60; i++ {
@@ -192,12 +201,17 @@ func (h *previewHost) StartPairing()              {}
 func (h *previewHost) ClosePairing()              {}
 func (h *previewHost) SetRequireAuth(on bool) int { h.info.RequireAuth = on; return 0 }
 func (h *previewHost) SetLockout(on bool)         { h.info.Lockout = on }
-func (h *previewHost) Password() string           { return "" }
-func (h *previewHost) SetPassword(string)         {}
-func (h *previewHost) Paired() []PairedDevice     { return h.paired }
-func (h *previewHost) Revoke(string) error        { return nil }
-func (h *previewHost) RevokeAll() (int, error)    { return 0, nil }
-func (h *previewHost) DisconnectController()      {}
+func (h *previewHost) SetAllowWinL(on bool)       { h.info.AllowWinL = on }
+func (h *previewHost) SetListen(listen string, port int) error {
+	h.info.ListenIP, h.info.Port = listen, port
+	return nil
+}
+func (h *previewHost) Password() string        { return "" }
+func (h *previewHost) SetPassword(string)      {}
+func (h *previewHost) Paired() []PairedDevice  { return h.paired }
+func (h *previewHost) Revoke(string) error     { return nil }
+func (h *previewHost) RevokeAll() (int, error) { return 0, nil }
+func (h *previewHost) DisconnectController()   {}
 
 type previewSettings struct{ m map[string]string }
 
@@ -223,6 +237,8 @@ func (previewPlatform) SystemDark() (bool, bool)     { return true, true }
 func (previewPlatform) PreferredLanguages() []string { return []string{"en-US"} }
 func (previewPlatform) ApplyTheme(bool)              {}
 func (previewPlatform) MessageBox(string, string)    {}
+func (previewPlatform) Autostart() bool              { return true }
+func (previewPlatform) SetAutostart(bool) error      { return nil }
 
 type previewClip struct{ s string }
 

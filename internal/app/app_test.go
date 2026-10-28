@@ -212,6 +212,82 @@ func TestPasswordFieldsCanShowWhatWasTyped(t *testing.T) {
 	}
 }
 
+// The port and the address are on the settings page and apply at once. A port that is not
+// one, or a place the host cannot listen on, leaves everything as it was and says why.
+func TestThePortAndAddressCanBeChangedInTheSettings(t *testing.T) {
+	r := newRig(t)
+	r.a.page, r.a.setSection = PageSettings, setNetwork
+	r.a.ui.Invalidate()
+	r.step(kit.Input{})
+	if !r.has("UDP port") || !r.has("Every address") || !r.has("100.109.77.29") || !r.has("Tailscale") {
+		t.Fatalf("network settings: %q", r.texts())
+	}
+	r.a.ui.Focus("set.port", true)
+	r.key(kit.KeyPress{Key: kit.KeyA, Ctrl: true})
+	r.typ("70000")
+	r.pressButton("set.port.apply")
+	if !r.has("Enter a port from 1 to 65535.") || r.host.called("listen::70000") {
+		t.Fatalf("a port out of range was not refused before it reached the host: %v %q", r.host.calls, r.texts())
+	}
+	r.a.ui.Focus("set.port", true)
+	r.key(kit.KeyPress{Key: kit.KeyA, Ctrl: true})
+	r.typ("7001")
+	r.key(kit.KeyPress{Key: kit.KeyEnter})
+	if !r.host.called("listen::7001") || r.host.Info().Port != 7001 || r.has("Enter a port") || !r.has("Now listening on Every address · UDP 7001.") {
+		t.Fatalf("Enter in the port field did not move the host: %v %q", r.host.calls, r.texts())
+	}
+	r.pressButton("set.listen.2") // 100.109.77.29, keeping the port
+	if !r.host.called("listen:100.109.77.29:7001") || r.host.Info().ListenIP != "100.109.77.29" {
+		t.Fatalf("choosing an address did not move the host there: %v", r.host.calls)
+	}
+	r.host.mu.Lock()
+	r.host.listenErr = errString("UDP port 7000 is in use by nx-host.exe (process 4120).")
+	r.host.mu.Unlock()
+	r.a.ui.Focus("set.port", true)
+	r.key(kit.KeyPress{Key: kit.KeyA, Ctrl: true})
+	r.typ("7000")
+	r.pressButton("set.port.apply")
+	if !r.has("Could not listen there: UDP port 7000 is in use by nx-host.exe (process 4120). Still listening where it was.") {
+		t.Errorf("the failure is not explained: %q", r.texts())
+	}
+}
+
+// Started with -listen or -port, the settings only show where the host listens.
+func TestAListenAddressFromTheCommandLineCannotBeChangedHere(t *testing.T) {
+	r := newRig(t)
+	r.host.info.ListenFixed, r.host.info.ListenIP, r.host.info.Port = true, "192.168.1.5", 7100
+	r.a.page, r.a.setSection = PageSettings, setNetwork
+	r.a.ui.Invalidate()
+	r.step(kit.Input{})
+	if !r.has("192.168.1.5 · UDP 7100") || !r.has("Given on the command line") || r.has("Apply") {
+		t.Errorf("network settings with a fixed address: %q", r.texts())
+	}
+}
+
+func TestStartupAndWinLSettings(t *testing.T) {
+	r := newRig(t)
+	r.a.page = PageSettings
+	r.a.ui.Invalidate()
+	r.step(kit.Input{})
+	r.pressButton("set.autostart")
+	if !r.plat.autostart {
+		t.Fatal("the switch did not make go-nx start with Windows")
+	}
+	r.plat.autoErr = errString("access denied")
+	r.pressButton("set.autostart")
+	if !r.plat.autostart || !r.has("Could not change starting with Windows: access denied") {
+		t.Errorf("a failure to change it is not reported: %v %q", r.plat.autostart, r.texts())
+	}
+	r.pressButton("set.section.1")
+	if !r.has("Let the other PC lock this one with Win+L") || !r.has("Frame rate") {
+		t.Fatalf("sharing settings: %q", r.texts())
+	}
+	r.pressButton("set.winl")
+	if !r.host.called("winl:true") || !r.host.Info().AllowWinL {
+		t.Errorf("the switch did not allow Win+L: %v", r.host.calls)
+	}
+}
+
 func TestTheLockoutCanBeTurnedOffOnThisPC(t *testing.T) {
 	r := newRig(t)
 	r.a.ShowPage(PageThisPC)
@@ -705,7 +781,7 @@ func TestDiagnosticsHaveNoPasswordsAndTheLastLines(t *testing.T) {
 	if !strings.Contains(d, "go-nx 0.7.0") || !strings.Contains(d, "line 79") || strings.Contains(d, "line 29\n") || !strings.Contains(d, "line 30\n") {
 		t.Errorf("diagnostics:\n%s", d)
 	}
-	r.a.page = PageSettings
+	r.a.page, r.a.setSection = PageSettings, setAbout
 	r.a.ui.Invalidate()
 	r.step(kit.Input{})
 	r.pressButton("set.diag")

@@ -27,10 +27,12 @@ type fakeHost struct {
 	paired        []PairedDevice
 	calls         []string
 	endedOnStrict int
+	listenErr     error // what SetListen fails with
 }
 
 func newFakeHost() *fakeHost {
-	return &fakeHost{info: HostInfo{Addrs: []string{"192.168.1.5"}, Port: 7000, ID: "9f3a1c77d0e24b58", RequireAuth: true, Lockout: true}}
+	return &fakeHost{info: HostInfo{Addrs: []string{"192.168.1.5"}, LocalIPs: []string{"192.168.1.5", "100.109.77.29"}, Port: 7000,
+		ID: "9f3a1c77d0e24b58", RequireAuth: true, Lockout: true}}
 }
 
 func (h *fakeHost) Info() HostInfo  { h.mu.Lock(); defer h.mu.Unlock(); return h.info }
@@ -63,6 +65,24 @@ func (h *fakeHost) SetLockout(on bool) {
 	defer h.mu.Unlock()
 	h.info.Lockout = on
 	h.record(fmt.Sprintf("lockout:%v", on))
+}
+
+// SetListen moves the host, unless listenErr says the place cannot be bound.
+func (h *fakeHost) SetListen(listen string, port int) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.record(fmt.Sprintf("listen:%s:%d", listen, port))
+	if h.listenErr != nil {
+		return h.listenErr
+	}
+	h.info.ListenIP, h.info.Port = listen, port
+	return nil
+}
+func (h *fakeHost) SetAllowWinL(on bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.info.AllowWinL = on
+	h.record(fmt.Sprintf("winl:%v", on))
 }
 func (h *fakeHost) Password() string { return h.password }
 func (h *fakeHost) SetPassword(p string) {
@@ -133,13 +153,15 @@ func (c *memClip) Set(s string) { c.s = s }
 
 // fakePlatform is the operating system.
 type fakePlatform struct {
-	clip     memClip
-	dark     bool
-	darkOK   bool
-	langs    []string
-	quit     bool
-	hidden   bool
-	themeSet []bool
+	clip      memClip
+	dark      bool
+	darkOK    bool
+	langs     []string
+	quit      bool
+	hidden    bool
+	themeSet  []bool
+	autostart bool
+	autoErr   error // what SetAutostart fails with
 }
 
 func (p *fakePlatform) Quit()                        { p.quit = true }
@@ -150,6 +172,14 @@ func (p *fakePlatform) SystemDark() (bool, bool)     { return p.dark, p.darkOK }
 func (p *fakePlatform) PreferredLanguages() []string { return p.langs }
 func (p *fakePlatform) ApplyTheme(dark bool)         { p.themeSet = append(p.themeSet, dark) }
 func (p *fakePlatform) MessageBox(string, string)    {}
+func (p *fakePlatform) Autostart() bool              { return p.autostart }
+func (p *fakePlatform) SetAutostart(on bool) error {
+	if p.autoErr != nil {
+		return p.autoErr
+	}
+	p.autostart = on
+	return nil
+}
 
 // fakeUpdater is the updater.
 type fakeUpdater struct {

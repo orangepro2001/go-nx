@@ -101,6 +101,14 @@ func (a *App) labelled(label string, control kit.Node) kit.Node {
 	return &kit.Col{Gap: theme.S1, Align: kit.AlignStretch, Children: []kit.Node{a.caption(label), control}}
 }
 
+// switchRow is a switch with its label. set is told the new state; the page is drawn again.
+func (a *App) switchRow(id kit.ID, label string, on bool, set func(on bool)) kit.Node {
+	return &kit.Row{Gap: theme.S3, Align: kit.AlignCenter, Children: []kit.Node{
+		&kit.Toggle{ID: id, On: on, OnChange: func(v bool) { set(v); a.ui.Invalidate() }},
+		kit.Grow(1, &kit.Label{Text: label, Wrap: true}),
+	}}
+}
+
 // secretField is a password field with a button that shows what was typed, so that a code
 // or password can be checked before it is sent. It never uses the input method, shown or
 // not: an input method would turn the letters of a password into a word.

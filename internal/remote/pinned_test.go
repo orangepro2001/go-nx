@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orangepro2001/go-nx/internal/proto"
+	"github.com/orangepro2001/go-nx/internal/tile"
 	"github.com/orangepro2001/go-nx/internal/trust"
 )
 
@@ -64,7 +65,7 @@ func TestAnExpectedFingerprintConnectsAndStoresNothing(t *testing.T) {
 	addr, _ := pinHost(t, host, viewer)
 
 	hosts := hostsStore(t)
-	if err := hosts.Set("127.0.0.1", "00ff"+strings.Repeat("0", 60)); err != nil { // a stale pin for the address
+	if err := hosts.Set(pinKey(addr), "00ff"+strings.Repeat("0", 60)); err != nil { // a stale pin for the address
 		t.Fatal(err)
 	}
 	c, err := dialExpecting(t, addr, viewer, hosts, fp(host))
@@ -72,7 +73,7 @@ func TestAnExpectedFingerprintConnectsAndStoresNothing(t *testing.T) {
 		t.Fatalf("Dial with the right fingerprint: %v", err)
 	}
 	c.Close()
-	if got, _ := hosts.Get("127.0.0.1"); got != "00ff"+strings.Repeat("0", 60) {
+	if got, _ := hosts.Get(pinKey(addr)); got != "00ff"+strings.Repeat("0", 60) {
 		t.Errorf("the remembered pin was changed to %q", got)
 	}
 
@@ -147,5 +148,51 @@ func TestDialNeedsAStoreOrAFingerprint(t *testing.T) {
 	defer cancel()
 	if _, err := Dial(ctx, addr, viewer, nil, ""); err == nil {
 		t.Fatal("Dial with nothing to check the host against succeeded")
+	}
+}
+
+// A host that moves must get its address back at once, with a session still open on it: a
+// listener from Listen keeps the socket until the session has drained.
+func TestHostListenerShutdownFreesTheAddressAtOnce(t *testing.T) {
+	host, viewer := identity(t), identity(t)
+	ln, err := ListenHost("127.0.0.1:0", host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	served := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept(ctx)
+		if err != nil {
+			served <- err
+			return
+		}
+		served <- Serve(ctx, conn, newFakeSource(64, 48), &fakeInjector{}, proto.NewDedup(), Options{FPS: 20,
+			Check: func(string, string, string) (trust.Verdict, error) { return trust.Allowed, nil }})
+	}()
+	c, err := dialExpecting(t, addr, viewer, nil, fp(host))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ran := make(chan error, 1)
+	go func() { ran <- c.Run(ctx, func(*tile.Frame, []tile.Rect) {}, func(uint64, byte) {}) }()
+	select {
+	case <-c.welcome:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the session never started")
+	}
+
+	ln.Shutdown()
+	again, err := ListenHost(addr, host)
+	if err != nil {
+		t.Fatalf("the address is still taken right after Shutdown: %v", err)
+	}
+	again.Shutdown()
+	select {
+	case <-served:
+	case <-time.After(5 * time.Second):
+		t.Error("the host's side of the session outlived Shutdown")
 	}
 }

@@ -32,10 +32,14 @@ const (
 
 // HostInfo is a snapshot of the sharing side for the interface.
 type HostInfo struct {
-	Err                string // non-empty if sharing could not start
-	Addrs              []string
+	Err                string   // non-empty if sharing could not start
+	Addrs              []string // the addresses that reach it
 	Port               int
-	ID                 string // this PC's short ID, which a first-time viewer is asked to compare
+	ListenIP           string   // the one address hosting is restricted to; "" for every address
+	LocalIPs           []string // every address of this PC, to choose from
+	ListenFixed        bool     // where to listen was given on the command line, not by the settings
+	AllowWinL          bool     // the viewer may lock this PC with Win+L
+	ID                 string   // this PC's short ID, which a first-time viewer is asked to compare
 	Paired             int
 	Controller         string // address of the device controlling this PC, "" for none
 	ControllerVerified bool
@@ -68,6 +72,11 @@ type HostService interface {
 	SetRequireAuth(on bool) (ended int)
 	// SetLockout turns the lockout after wrong passwords on or off.
 	SetLockout(on bool)
+	// SetListen moves hosting to listen (an IP, or "" for every address) and port at once.
+	// On an error nothing has changed.
+	SetListen(listen string, port int) error
+	// SetAllowWinL lets the viewer lock this PC with Win+L, or not.
+	SetAllowWinL(on bool)
 	Password() string
 	SetPassword(string)
 	Paired() []PairedDevice
@@ -118,6 +127,9 @@ type Platform interface {
 	// ApplyTheme is told the theme in force, to colour the title bar.
 	ApplyTheme(dark bool)
 	MessageBox(title, text string)
+	// Autostart reports whether go-nx starts, in the tray, when the user signs in.
+	Autostart() bool
+	SetAutostart(on bool) error
 }
 
 // Conn is a connection to a host, as the viewer uses it. *remote.Client is one.

@@ -41,6 +41,12 @@ func (winPlatform) MessageBox(title, text string) {
 	messageBox(title, text)
 }
 
+func (winPlatform) Autostart() bool {
+	_, ok := runCommand()
+	return ok
+}
+func (winPlatform) SetAutostart(on bool) error { return setAutostart(on) }
+
 // SystemDark reads the "apps use light theme" setting, which is 0 when apps should be dark.
 func (winPlatform) SystemDark() (dark, ok bool) {
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, registry.QUERY_VALUE)

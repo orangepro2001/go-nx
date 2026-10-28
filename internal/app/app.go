@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"log"
 	"math/rand/v2"
+	"strconv"
 	"sync/atomic"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 
+	"github.com/orangepro2001/go-nx/internal/remote"
 	"github.com/orangepro2001/go-nx/internal/ui/i18n"
 	"github.com/orangepro2001/go-nx/internal/ui/kit"
 	"github.com/orangepro2001/go-nx/internal/ui/text"
@@ -90,6 +92,9 @@ type App struct {
 	quickAddr, quickPw string
 	hostPw             string
 	revealed           map[kit.ID]bool // password fields showing what was typed
+	setSection         int             // the part of the settings page shown: setGeneral...
+	portText           string          // the port typed on the settings page
+	netErr             string          // why the last move of the host failed, "" if it did not
 	devQuery           string
 	devSort            SortMode
 	logJump            bool // the next time the log is shown, scroll to its end
@@ -128,6 +133,10 @@ func New(cfg Config, fonts Fonts) *App {
 	a.nextOp >>= 1 // unique per run
 	a.quickAddr = cfg.Connect
 	a.hostPw = cfg.Host.Password()
+	a.portText = strconv.Itoa(remote.DefaultPort)
+	if p := cfg.Host.Info().Port; p > 0 {
+		a.portText = strconv.Itoa(p)
+	}
 	if s, ok := cfg.Settings.Get(keySort); ok && SortMode(s) == SortName {
 		a.devSort = SortName
 	}

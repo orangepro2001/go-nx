@@ -216,5 +216,5 @@ func explainListenError(err error, port int) string {
 		}
 		who = processName(pid)
 	}
-	return fmt.Sprintf("UDP port %d is in use by %s. End the older go-nx / host.exe in Task Manager, or start with -port.", port, who)
+	return fmt.Sprintf("UDP port %d is in use by %s. Close that program, or choose another port in Settings > Network.", port, who)
 }

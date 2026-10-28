@@ -206,5 +206,30 @@ const (
 	KeySetSession
 	KeySetAutoReconnect
 	KeySetKoreanKeys
+	KeySetSecGeneral
+	KeySetSecSharing
+	KeySetSecNetwork
+	KeySetSecSession
+	KeySetSecAbout
+	KeySetStartup
+	KeySetAutostart
+	KeySetAutostartNote
+	KeySetAutostartFailed
+	KeySetSharing
+	KeySetAllowWinL
+	KeySetAllowWinLNote
+	KeySetNetwork
+	KeySetPort
+	KeySetPortApply
+	KeySetPortNote
+	KeySetPortBad
+	KeySetListenOn
+	KeySetListenAll
+	KeySetListenNote
+	KeySetListenFixed
+	KeySetListenFailed
+	KeySetListenMoved
+	KeySetListenMissing
+	KeyTailscale
 	numKeys
 )

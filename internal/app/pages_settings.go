@@ -3,7 +3,10 @@ package app
 import (
 	"fmt"
 	"log"
+	"net/netip"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,10 +26,144 @@ func FixedFrameRates(s Settings) bool {
 	return v == "fixed"
 }
 
+// The parts of the settings page, in the order of its tabs.
+const (
+	setGeneral = iota
+	setSharing
+	setNetwork
+	setSession
+	setAbout
+)
+
 func (a *App) pageSettings() kit.Node {
 	tr := a.tr
-	return a.pageFrame("page.settings", tr.T(i18n.KeyNavSettings),
-		a.appearanceCard(), a.languageCard(), a.sessionCard2(), a.frameRateCard(), a.updatesCard(), a.diagnosticsCard())
+	// One button per part; in a narrow window they go on two lines.
+	tabs := &kit.Grid{Gap: theme.S1, MinCell: 112}
+	for i, k := range []i18n.Key{i18n.KeySetSecGeneral, i18n.KeySetSecSharing, i18n.KeySetSecNetwork, i18n.KeySetSecSession, i18n.KeySetSecAbout} {
+		tabs.Children = append(tabs.Children, &kit.Button{ID: kit.ID("set.section." + itoa(i)), Label: tr.T(k), Selected: i == a.setSection, Compact: true,
+			OnClick: func() { a.setSection = i; a.ui.Invalidate() }})
+	}
+	var cards []kit.Node
+	switch a.setSection {
+	case setSharing:
+		cards = []kit.Node{a.sharingCard(), a.frameRateCard()}
+	case setNetwork:
+		cards = []kit.Node{a.networkCard()}
+	case setSession:
+		cards = []kit.Node{a.sessionCard2()}
+	case setAbout:
+		cards = []kit.Node{a.updatesCard(), a.diagnosticsCard()}
+	default:
+		cards = []kit.Node{a.appearanceCard(), a.languageCard(), a.startupCard()}
+	}
+	return a.pageFrame("page.settings", tr.T(i18n.KeyNavSettings), append([]kit.Node{tabs}, cards...)...)
+}
+
+// startupCard is whether go-nx starts with Windows.
+func (a *App) startupCard() kit.Node {
+	tr := a.tr
+	return a.card(tr.T(i18n.KeySetStartup), kit.Color{},
+		a.switchRow("set.autostart", tr.T(i18n.KeySetAutostart), a.cfg.Platform.Autostart(), func(on bool) {
+			if err := a.cfg.Platform.SetAutostart(on); err != nil {
+				log.Printf("start with Windows: %v", err)
+				a.Toast(tr.T(i18n.KeySetAutostartFailed, "error", err.Error()), kit.ToneWarn)
+			}
+		}),
+		a.caption(tr.T(i18n.KeySetAutostartNote)),
+	)
+}
+
+// sharingCard is what a viewer may do to this PC.
+func (a *App) sharingCard() kit.Node {
+	tr := a.tr
+	return a.card(tr.T(i18n.KeySetSharing), kit.Color{},
+		a.switchRow("set.winl", tr.T(i18n.KeySetAllowWinL), a.cfg.Host.Info().AllowWinL, a.cfg.Host.SetAllowWinL),
+		a.caption(tr.T(i18n.KeySetAllowWinLNote)),
+	)
+}
+
+// networkCard is where this PC waits for connections: the port, and every address or one.
+// A change applies at once; if the host cannot listen there it stays where it was.
+func (a *App) networkCard() kit.Node {
+	tr, p := a.tr, a.ui.Pal
+	info := a.cfg.Host.Info()
+	if info.ListenFixed {
+		where := tr.T(i18n.KeySetListenAll)
+		if info.ListenIP != "" {
+			where = info.ListenIP
+		}
+		return a.card(tr.T(i18n.KeySetNetwork), kit.Color{},
+			a.body(fmt.Sprintf("%s · UDP %d", where, info.Port)),
+			a.caption(tr.T(i18n.KeySetListenFixed)),
+		)
+	}
+	move := func(listen string) {
+		port, err := strconv.Atoi(strings.TrimSpace(a.portText))
+		if err != nil || port < 1 || port > 65535 {
+			a.netErr = tr.T(i18n.KeySetPortBad)
+		} else if err := a.cfg.Host.SetListen(listen, port); err != nil {
+			a.netErr = tr.T(i18n.KeySetListenFailed, "error", err.Error())
+		} else {
+			a.netErr, a.portText = "", strconv.Itoa(port)
+			where := tr.T(i18n.KeySetListenAll)
+			if listen != "" {
+				where = listen
+			}
+			a.Toast(tr.T(i18n.KeySetListenMoved, "where", fmt.Sprintf("%s · UDP %d", where, port)), kit.ToneGood)
+		}
+		a.ui.Invalidate()
+	}
+	choices := append([]string{""}, info.LocalIPs...)
+	if info.ListenIP != "" && !slices.Contains(info.LocalIPs, info.ListenIP) {
+		choices = append(choices, info.ListenIP) // saved, but the address is gone (or not there yet)
+	}
+	addrs := &kit.Col{Gap: theme.S1, Align: kit.AlignStretch}
+	for i, ip := range choices {
+		label := ip
+		if ip == "" {
+			label = tr.T(i18n.KeySetListenAll)
+		}
+		chosen := ip == info.ListenIP
+		dot := p.Border
+		if chosen {
+			dot = p.Accent
+		}
+		row := &kit.Row{Gap: theme.S3, Align: kit.AlignCenter, Children: []kit.Node{&kit.Dot{Color: dot, Size: 12}, &kit.Label{Text: label}}}
+		switch {
+		case ip != "" && !slices.Contains(info.LocalIPs, ip):
+			row.Children = append(row.Children, &kit.Chip{Text: tr.T(i18n.KeySetListenMissing), Tone: kit.ToneWarn})
+		case isTailscale(ip):
+			row.Children = append(row.Children, &kit.Chip{Text: tr.T(i18n.KeyTailscale), Tone: kit.ToneAccent})
+		}
+		row.Children = append(row.Children, kit.Spacer())
+		addrs.Children = append(addrs.Children, &kit.Clickable{ID: kit.ID("set.listen." + itoa(i)), Hover: true, Radius: theme.RadiusSmall,
+			OnClick: func() {
+				if !chosen {
+					move(ip)
+				}
+			},
+			Child: kit.Pad{In: kit.Sym(theme.S2, theme.S1), Child: row}})
+	}
+	kids := []kit.Node{
+		a.labelled(tr.T(i18n.KeySetPort), &kit.Row{Gap: theme.S2, Align: kit.AlignCenter, Children: []kit.Node{
+			kit.Sized{MaxW: 120, Child: &kit.TextField{ID: "set.port", Value: &a.portText, MaxLen: 5, NoIME: true, Mono: true, OnSubmit: func() { move(info.ListenIP) }}},
+			&kit.Button{ID: "set.port.apply", Label: tr.T(i18n.KeySetPortApply), OnClick: func() { move(info.ListenIP) }},
+			kit.Spacer(),
+		}}),
+		a.caption(tr.T(i18n.KeySetPortNote)),
+		a.labelled(tr.T(i18n.KeySetListenOn), addrs),
+		a.caption(tr.T(i18n.KeySetListenNote)),
+	}
+	if a.netErr != "" {
+		kids = append(kids, &kit.Label{Text: a.netErr, Color: p.Warn, Wrap: true})
+	}
+	return a.card(tr.T(i18n.KeySetNetwork), kit.Color{}, kids...)
+}
+
+// isTailscale reports whether ip is in the range Tailscale gives its devices (100.64.0.0/10).
+func isTailscale(ip string) bool {
+	a, err := netip.ParseAddr(ip)
+	return err == nil && netip.MustParsePrefix("100.64.0.0/10").Contains(a)
 }
 
 func (a *App) appearanceCard() kit.Node {
@@ -75,19 +212,15 @@ func (a *App) languageCard() kit.Node {
 func (a *App) sessionCard2() kit.Node {
 	tr := a.tr
 	toggle := func(id kit.ID, label, key string, on bool) kit.Node {
-		return &kit.Row{Gap: theme.S3, Align: kit.AlignCenter, Children: []kit.Node{
-			&kit.Toggle{ID: id, On: on, OnChange: func(v bool) {
-				val := "0"
-				if v {
-					val = "1"
-				}
-				if err := a.cfg.Settings.Set(key, val); err != nil {
-					log.Printf("could not save setting: %v", err)
-				}
-				a.ui.Invalidate()
-			}},
-			kit.Grow(1, &kit.Label{Text: label, Wrap: true}),
-		}}
+		return a.switchRow(id, label, on, func(v bool) {
+			val := "0"
+			if v {
+				val = "1"
+			}
+			if err := a.cfg.Settings.Set(key, val); err != nil {
+				log.Printf("could not save setting: %v", err)
+			}
+		})
 	}
 	return a.card(tr.T(i18n.KeySetSession), kit.Color{},
 		toggle("set.reconnect", tr.T(i18n.KeySetAutoReconnect), keyAutoReconnect, a.autoReconnect()),

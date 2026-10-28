@@ -46,8 +46,8 @@ func main() {
 	// capture and the injector both count in physical pixels.
 	capture.EnableDPIAwareness()
 	connect := flag.String("connect", "", "prefill the address to connect to")
-	port := flag.Int("port", 7000, "UDP port to host on")
-	listen := flag.String("listen", "", "restrict hosting to one local IP (optionally IP:port), e.g. 192.168.1.5; default is every interface")
+	port := flag.Int("port", remote.DefaultPort, "UDP port to host on (default: the one in the settings, else 7000)")
+	listen := flag.String("listen", "", "restrict hosting to one local IP (optionally IP:port), e.g. 192.168.1.5 (default: the settings, else every interface)")
 	display := flag.String("display", "", `monitor to share: "primary", an index, or a device name such as \\.\DISPLAY2 (default: the "display" setting, else primary)`)
 	layered := flag.Bool("layered", true, "include layered windows (tooltips, menus) in the capture; false is an experiment for a host whose own pointer flickers")
 	fps := flag.Int("fps", remote.DefaultFPS, "capture frames per second while a viewer is watching a picture that changes")
@@ -58,6 +58,8 @@ func main() {
 	noUpdate := flag.Bool("no-update", false, "never check for updates")
 	restarted := flag.Bool("restarted", false, "set by the updater: wait for the previous instance to exit")
 	flag.Parse()
+	fixedListen := false // where to listen was given here, so the settings do not decide it
+	flag.Visit(func(f *flag.Flag) { fixedListen = fixedListen || f.Name == "listen" || f.Name == "port" })
 
 	t0 := time.Now()
 	var wait time.Duration
@@ -125,7 +127,7 @@ func main() {
 	}
 	mark("identity, settings and saved connections loaded")
 
-	host := startHost(*listen, *port, remote.Rates{Base: *fps, Active: *fpsActive, Idle: *fpsIdle}, *display, *layered, id, trusted, settings)
+	host := startHost(*listen, *port, fixedListen, remote.Rates{Base: *fps, Active: *fpsActive, Idle: *fpsIdle}, *display, *layered, id, trusted, settings)
 	mark("host started")
 
 	fonts, err := text.NewEngine(text.SystemLocator(), log.Printf)

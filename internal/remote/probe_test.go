@@ -102,10 +102,13 @@ func TestPinHostThenDialSendsThePasswordOnlyToThatIdentity(t *testing.T) {
 		t.Fatalf("host checked %d viewers after a pinned Dial, want 1", checked.Load())
 	}
 
-	// Pinned to the identity the user confirmed: another host answering at the
-	// same address (the pin is by IP, and both listen on 127.0.0.1) must be
-	// refused before any password is sent.
+	// Pinned to the identity the user confirmed: another host answering at an
+	// address where that identity was confirmed must be refused before any password
+	// is sent.
 	otherAddr, _, otherChecked := probeHost(t)
+	if err := PinHost(hosts, otherAddr, fpSeen); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Dial(ctx, otherAddr, viewerID, hosts, "pw"); err == nil {
 		t.Fatal("Dial to a different identity succeeded")
 	}

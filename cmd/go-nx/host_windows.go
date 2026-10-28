@@ -6,13 +6,16 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -35,13 +38,14 @@ const pairingWindow = 5 * time.Minute
 type hostState struct {
 	mu         sync.Mutex
 	Port       int
-	Addrs      []string
-	ID         string // this PC's short fingerprint, for display
-	Err        string // non-empty if hosting could not start
-	Controller string // remote address currently controlling this PC
-	CtrlFP     string // its certificate fingerprint, so revoking that device can end its session
-	CtrlOpen   bool   // it was let in without verification (open mode)
-	Rejected   string // address of the last device turned away
+	Addrs      []string // the addresses that reach it
+	ListenIP   string   // the one IP hosting is restricted to; "" for every address
+	ID         string   // this PC's short fingerprint, for display
+	Err        string   // non-empty if hosting could not start
+	Controller string   // remote address currently controlling this PC
+	CtrlFP     string   // its certificate fingerprint, so revoking that device can end its session
+	CtrlOpen   bool     // it was let in without verification (open mode)
+	Rejected   string   // address of the last device turned away
 	RejectedBy app.Reason
 	Sharers    []string // other programs bound to the hosting port, which take the connections to their addresses
 	policy     *trust.Policy
@@ -50,8 +54,16 @@ type hostState struct {
 	seen       map[string]seenPeer    // by remote address: who is connecting and how they were judged
 	notifyFn   atomic.Pointer[func()] // something the interface shows has changed
 	rates      remote.Rates
-	kick       func(code quic.ApplicationErrorCode, reason string) // closes the current controller; set by acceptLoop
+	kick       func(code quic.ApplicationErrorCode, reason string) // closes the current controller; set by newAcceptor
 	sessions   *remote.Sessions                                    // which live sessions were let in without verification
+	input      *remote.InputController                             // set by newAcceptor
+
+	id      tls.Certificate
+	fixed   bool                       // -listen or -port was given: the settings do not decide where it listens
+	local   []string                   // this PC's addresses, refreshed by watchPort
+	ln      *remote.HostListener       // nil while not listening
+	serve   func(*remote.HostListener) // accepts on a listener; nil until the screen is open
+	bindGen int                        // counts moves, so a wait for an address gives up when the host moves again
 }
 
 func (h *hostState) fail(err error) {
@@ -147,7 +159,8 @@ func (h *hostState) Info() app.HostInfo {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return app.HostInfo{
-		Err: h.Err, Addrs: h.Addrs, Port: h.Port, Paired: h.policy.TrustedCount(), ID: h.ID,
+		Err: h.Err, Addrs: h.Addrs, Port: h.Port, ListenIP: h.ListenIP, LocalIPs: h.local, ListenFixed: h.fixed,
+		AllowWinL: h.settings.Bool("allow_win_l", false), Paired: h.policy.TrustedCount(), ID: h.ID,
 		Controller: h.Controller, ControllerVerified: h.Controller != "" && !h.CtrlOpen,
 		Rejected: h.Rejected, RejectedWhy: h.RejectedBy,
 		PairingLeft: h.policy.PairingLeft(), PairingCode: h.policy.PairingCode(),
@@ -158,16 +171,32 @@ func (h *hostState) Info() app.HostInfo {
 // portCheckEvery is how often the host looks for another program bound to its port.
 const portCheckEvery = 10 * time.Second
 
-// watchPort keeps Sharers up to date. Another host started with one of this PC's addresses
-// (a second go-nx, an nx-host) gets every connection sent to that address, and nothing here
-// (pairing, open mode, the password) applies to them: the person has to be told.
-func (h *hostState) watchPort(port int) {
+// watchPort keeps Sharers up to date, and this PC's addresses. Another host started with one
+// of this PC's addresses (a second go-nx, an nx-host) gets every connection sent to that
+// address, and nothing here (pairing, open mode, the password) applies to them: the person
+// has to be told.
+func (h *hostState) watchPort() {
 	for {
-		s := portSharers(port)
+		local := localIPs()
+		h.mu.Lock()
+		port, on := h.Port, h.ln != nil
+		moved := !slices.Equal(local, h.local)
+		h.local = local
+		if h.ListenIP == "" {
+			h.Addrs = local
+		}
+		h.mu.Unlock()
+		var s []string
+		if on {
+			s = portSharers(port)
+		}
 		h.mu.Lock()
 		same := slices.Equal(s, h.Sharers)
 		h.Sharers = s
 		h.mu.Unlock()
+		if moved {
+			h.changed()
+		}
 		if !same {
 			if len(s) > 0 {
 				log.Printf("UDP port %d is also bound by %s: connections to those addresses go there, not here", port, strings.Join(s, ", "))
@@ -213,17 +242,36 @@ func (h *hostState) SetRequireAuth(on bool) (dropped int) {
 	return dropped
 }
 
-// SetLockout turns the lockout after wrong passwords on or off and saves the choice.
-// Turning it off also lets in at once a device that is locked out now.
-func (h *hostState) SetLockout(on bool) {
-	h.policy.SetLockout(on)
+// SetAllowWinL lets the viewer lock this PC with Win+L, or not, from its next key press,
+// and saves the choice.
+func (h *hostState) SetAllowWinL(on bool) {
+	h.save("allow_win_l", on)
+	h.mu.Lock()
+	in := h.input
+	h.mu.Unlock()
+	if in != nil {
+		in.SetAllowWinL(on)
+	}
+	log.Printf("Win+L from the viewer: %v", on)
+	h.changed()
+}
+
+// save stores a yes/no setting.
+func (h *hostState) save(key string, on bool) {
 	v := "0"
 	if on {
 		v = "1"
 	}
-	if err := h.settings.Set("lockout", v); err != nil {
+	if err := h.settings.Set(key, v); err != nil {
 		log.Printf("could not save setting: %v", err)
 	}
+}
+
+// SetLockout turns the lockout after wrong passwords on or off and saves the choice.
+// Turning it off also lets in at once a device that is locked out now.
+func (h *hostState) SetLockout(on bool) {
+	h.policy.SetLockout(on)
+	h.save("lockout", on)
 	h.mu.Lock()
 	if h.RejectedBy == app.ReasonLockedOut {
 		h.Rejected, h.RejectedBy = "", app.ReasonNone
@@ -297,24 +345,23 @@ func (h *hostState) tooltip(tr *i18n.Translator) string {
 // startHost begins sharing the primary screen in the background.
 //
 // listen restricts it to one local IP (see remote.ParseListen); empty means every
-// interface on port. The addresses the home tab shows are the ones that can reach it.
-func startHost(listen string, port int, rates remote.Rates, display string, layered bool, id tls.Certificate, trusted, settings *trust.Store) *hostState {
+// interface on port. Unless fixed (-listen or -port was given), the place saved in the
+// settings is used instead. The addresses the home tab shows are the ones that can reach it.
+func startHost(listen string, port int, fixed bool, rates remote.Rates, display string, layered bool, id tls.Certificate, trusted, settings *trust.Store) *hostState {
 	h := &hostState{
 		policy: trust.NewPolicy(trusted), trusted: trusted, settings: settings,
-		ID: trust.Fingerprint(id.Certificate[0])[:16],
+		ID: trust.Fingerprint(id.Certificate[0])[:16], id: id, fixed: fixed, local: localIPs(),
 	}
 	h.sessions = remote.NewSessions(h.policy.RequireAuth)
-	bind, port, only, err := remote.ParseListen(listen, port)
+	if !fixed {
+		listen, port = h.savedListen()
+	}
+	_, port, only, err := remote.ParseListen(listen, port)
 	if err != nil {
 		h.fail(err)
 		return h
 	}
-	h.Port = port
-	if only != "" {
-		h.Addrs = []string{only}
-	} else {
-		h.Addrs = localIPs()
-	}
+	h.Port, h.ListenIP, h.Addrs = port, only, h.reachable(only)
 	h.policy.SetPassword(h.Password())
 	h.policy.SetRequireAuth(h.requireAuth())
 	h.policy.SetLockout(h.settings.Bool("lockout", true))
@@ -330,22 +377,149 @@ func startHost(listen string, port int, rates remote.Rates, display string, laye
 	scr.SetLayered(layered && h.settings.Bool("capture_layered", true))
 	log.Printf("startup: sharing %s; layered windows %v; screen capture ready in %dms",
 		scr.Display(), layered && h.settings.Bool("capture_layered", true), time.Since(t0).Milliseconds())
-	t0 = time.Now()
-	ln, err := remote.Listen(bind, id)
-	if err != nil {
-		h.fail(errors.New(explainListenError(err, port)))
-		return h
-	}
-	log.Printf("startup: QUIC listener ready in %dms", time.Since(t0).Milliseconds())
-	go h.watchPort(port)
 	w, ht := scr.Size()
-	log.Printf("hosting %dx%d on UDP %s", w, ht, bind)
 	inj := inject.New(w, ht)
 	retargetInjector(inj, scr.Display())
 	h.rates = rates.Normalized()
 	log.Printf("startup: frame rate %s", h.rates)
-	go acceptLoop(h, ln, scr, inj)
+	h.serve = newAcceptor(h, scr, inj)
+	t0 = time.Now()
+	if h.bind(listen, port) == nil {
+		log.Printf("startup: QUIC listener ready in %dms; hosting %dx%d", time.Since(t0).Milliseconds(), w, ht)
+	}
+	go h.watchPort()
 	return h
+}
+
+// reachable is the addresses that reach a host restricted to only ("" for none).
+func (h *hostState) reachable(only string) []string {
+	if only != "" {
+		return []string{only}
+	}
+	return h.local
+}
+
+// savedListen is where the settings say to listen: an IP or "" for every address, and the port.
+func (h *hostState) savedListen() (listen string, port int) {
+	listen, _ = h.settings.Get("listen_ip")
+	port = remote.DefaultPort
+	if v, ok := h.settings.Get("port"); ok {
+		if p, err := strconv.Atoi(v); err == nil {
+			port = p
+		}
+	}
+	return listen, port
+}
+
+// bind starts listening on listen (an IP, or "" for every address) and port. An IP that is
+// not on this PC yet (Tailscale still starting when go-nx starts with Windows) is waited
+// for in the background, and the error says so.
+func (h *hostState) bind(listen string, port int) error {
+	addr, port, only, err := remote.ParseListen(listen, port)
+	if err != nil {
+		return err
+	}
+	h.mu.Lock()
+	h.bindGen++
+	gen := h.bindGen
+	h.Port, h.ListenIP, h.Addrs = port, only, h.reachable(only)
+	h.mu.Unlock()
+	ln, err := remote.ListenHost(addr, h.id)
+	if err != nil {
+		why := explainListenError(err, port)
+		if only != "" && errors.Is(err, syscall.Errno(10049)) { // WSAEADDRNOTAVAIL
+			why = fmt.Sprintf("%s is not an address of this PC (yet); hosting starts when it is", only)
+			go h.bindWhenThere(gen, addr)
+		}
+		h.fail(errors.New(why))
+		h.changed()
+		return errors.New(why)
+	}
+	h.listening(gen, ln, addr)
+	return nil
+}
+
+// bindWhenThere tries addr again every few seconds until it can be bound or the host has
+// moved on.
+func (h *hostState) bindWhenThere(gen int, addr string) {
+	for {
+		time.Sleep(5 * time.Second)
+		h.mu.Lock()
+		current := h.bindGen == gen
+		h.mu.Unlock()
+		if !current {
+			return
+		}
+		if ln, err := remote.ListenHost(addr, h.id); err == nil {
+			h.listening(gen, ln, addr)
+			return
+		}
+	}
+}
+
+// listening makes ln the host's listener, unless the host has moved since gen.
+func (h *hostState) listening(gen int, ln *remote.HostListener, addr string) {
+	h.mu.Lock()
+	if h.bindGen != gen {
+		h.mu.Unlock()
+		ln.Shutdown()
+		return
+	}
+	h.ln, h.Err = ln, ""
+	h.mu.Unlock()
+	log.Printf("hosting on UDP %s", addr)
+	go h.serve(ln)
+	h.changed()
+}
+
+// unbind stops listening. The session in progress ends, and so does a wait for an address.
+func (h *hostState) unbind() {
+	h.mu.Lock()
+	old := h.ln
+	h.ln = nil
+	h.bindGen++
+	h.mu.Unlock()
+	if old == nil {
+		return
+	}
+	if h.kick != nil {
+		h.kick(remote.CloseKicked, "the host moved to another address")
+	}
+	old.Shutdown()
+}
+
+// SetListen moves the host to listen (an IP, or "" for every address) and port, at once, and
+// saves the choice. The session in progress ends. If the new place cannot be bound, the host
+// goes back to where it was, nothing is saved, and the error says why.
+func (h *hostState) SetListen(listen string, port int) error {
+	if h.fixed {
+		return errors.New("where to listen was given on the command line (-listen / -port)")
+	}
+	if _, _, _, err := remote.ParseListen(listen, port); err != nil {
+		return err
+	}
+	if h.serve == nil { // no screen to share, so nothing listens: the next start uses it
+		return h.saveListen(listen, port)
+	}
+	h.mu.Lock()
+	oldIP, oldPort, was := h.ListenIP, h.Port, h.ln != nil
+	h.mu.Unlock()
+	h.unbind()
+	if err := h.bind(listen, port); err != nil {
+		if was {
+			h.bind(oldIP, oldPort)
+		}
+		return err
+	}
+	log.Printf("moved to listen on %q, UDP port %d", listen, port)
+	return h.saveListen(listen, port)
+}
+
+func (h *hostState) saveListen(listen string, port int) error {
+	if err := h.settings.Set("listen_ip", listen); err != nil {
+		return err
+	}
+	return h.settings.Set("port", strconv.Itoa(port))
 }
 
 // retargetInjector points the injector at monitor d. The primary monitor keeps the
@@ -359,7 +533,10 @@ func retargetInjector(inj *inject.Injector, d capture.Display) {
 	inj.SetDisplay(int(d.W), int(d.H), int(d.X), int(d.Y), vx, vy, vw, vh)
 }
 
-func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *inject.Injector) {
+// newAcceptor sets up what every listener of the host shares (the controller, the input,
+// the gate) and returns the loop that accepts on one listener. The loop of a listener the
+// host moved away from ends quietly.
+func newAcceptor(h *hostState, scr *capture.Screen, inj *inject.Injector) func(*remote.HostListener) {
 	var (
 		mu              sync.Mutex
 		active          *quic.Conn
@@ -367,7 +544,11 @@ func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *injec
 		inputController = remote.NewInputController(inj)
 		gate            = remote.NewGate(16, 4) // connections waiting to be authenticated: in all, and per address
 	)
+	// Win+L locks this PC and the viewer cannot unlock it, so it is refused unless
+	// the setting says otherwise.
+	inputController.SetAllowWinL(h.settings.Bool("allow_win_l", false))
 	h.mu.Lock()
+	h.input = inputController
 	h.kick = func(code quic.ApplicationErrorCode, reason string) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -376,73 +557,77 @@ func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *injec
 		}
 	}
 	h.mu.Unlock()
-	// Win+L locks this PC and the viewer cannot unlock it, so it is refused unless
-	// the setting says otherwise.
-	inputController.SetAllowWinL(h.settings.Bool("allow_win_l", false))
-	for {
-		conn, err := ln.Accept(context.Background())
-		if err != nil {
-			h.fail(err)
-			return
-		}
-		log.Printf("handshake complete with %s", conn.RemoteAddr())
-		// The frame-rate policy is read when a session begins, so a change in the settings
-		// applies to the next connection.
-		rates := h.currentRates()
-		boost := rates.Boost()
-		go func() {
-			err := remote.Serve(context.Background(), conn, scr, inj, dd, remote.Options{
-				FPS:             rates.Base,
-				FPSFn:           boost.Rate,
-				OnInput:         boost.Touch,
-				IdleFPS:         rates.Idle,
-				Check:           h.check,
-				InputController: inputController,
-				Gate:            gate,
-				Sessions:        h.sessions,
-				HostName:        remote.ComputerName(),
-				OnSourceChanged: func(w, h int) {
-					d := scr.Display()
-					log.Printf("shared screen is now %s", d)
-					retargetInjector(inj, d)
-				},
-				OnPeer: func(p remote.PeerInfo) {
-					log.Printf("viewer %s speaks control protocol v%d (name %q)", conn.RemoteAddr(), p.Version, p.Name)
-				},
-				OnError: func(err error) { log.Printf("session cleanup: %v", err) },
-				OnAuthed: func() {
-					mu.Lock()
-					defer mu.Unlock()
-					if active != nil {
-						active.CloseWithError(remote.CloseReplaced, "replaced by a new client")
-					}
-					active = conn
-					addr := conn.RemoteAddr().String()
-					h.mu.Lock()
-					h.Controller = addr
-					peer := h.seen[addr]
-					h.CtrlFP, h.CtrlOpen = peer.fp, !peer.verified
-					h.Rejected, h.RejectedBy = "", app.ReasonNone
-					delete(h.seen, addr)
-					h.mu.Unlock()
-					log.Printf("client connected: %s", addr)
-					h.changed()
-				},
-			})
-			if err == remote.ErrDenied {
+	return func(ln *remote.HostListener) {
+		for {
+			conn, err := ln.Accept(context.Background())
+			if err != nil {
+				h.mu.Lock()
+				current := h.ln == ln
+				h.mu.Unlock()
+				if current {
+					h.fail(err)
+				}
 				return
 			}
-			mu.Lock()
-			defer mu.Unlock()
-			if active == conn {
-				active = nil
-				h.mu.Lock()
-				h.Controller, h.CtrlFP, h.CtrlOpen = "", "", false
-				h.mu.Unlock()
-			}
-			log.Printf("client %s disconnected: %v", conn.RemoteAddr(), err)
-			h.changed()
-		}()
+			log.Printf("handshake complete with %s", conn.RemoteAddr())
+			// The frame-rate policy is read when a session begins, so a change in the settings
+			// applies to the next connection.
+			rates := h.currentRates()
+			boost := rates.Boost()
+			go func() {
+				err := remote.Serve(context.Background(), conn, scr, inj, dd, remote.Options{
+					FPS:             rates.Base,
+					FPSFn:           boost.Rate,
+					OnInput:         boost.Touch,
+					IdleFPS:         rates.Idle,
+					Check:           h.check,
+					InputController: inputController,
+					Gate:            gate,
+					Sessions:        h.sessions,
+					HostName:        remote.ComputerName(),
+					OnSourceChanged: func(w, h int) {
+						d := scr.Display()
+						log.Printf("shared screen is now %s", d)
+						retargetInjector(inj, d)
+					},
+					OnPeer: func(p remote.PeerInfo) {
+						log.Printf("viewer %s speaks control protocol v%d (name %q)", conn.RemoteAddr(), p.Version, p.Name)
+					},
+					OnError: func(err error) { log.Printf("session cleanup: %v", err) },
+					OnAuthed: func() {
+						mu.Lock()
+						defer mu.Unlock()
+						if active != nil {
+							active.CloseWithError(remote.CloseReplaced, "replaced by a new client")
+						}
+						active = conn
+						addr := conn.RemoteAddr().String()
+						h.mu.Lock()
+						h.Controller = addr
+						peer := h.seen[addr]
+						h.CtrlFP, h.CtrlOpen = peer.fp, !peer.verified
+						h.Rejected, h.RejectedBy = "", app.ReasonNone
+						delete(h.seen, addr)
+						h.mu.Unlock()
+						log.Printf("client connected: %s", addr)
+						h.changed()
+					},
+				})
+				if err == remote.ErrDenied {
+					return
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				if active == conn {
+					active = nil
+					h.mu.Lock()
+					h.Controller, h.CtrlFP, h.CtrlOpen = "", "", false
+					h.mu.Unlock()
+				}
+				log.Printf("client %s disconnected: %v", conn.RemoteAddr(), err)
+				h.changed()
+			}()
+		}
 	}
 }
 

@@ -43,6 +43,9 @@ const (
 // ErrHostChanged means a host's certificate differs from the one remembered for its address.
 var ErrHostChanged = errors.New("host identity changed")
 
+// DefaultPort is the UDP port a host listens on unless told otherwise.
+const DefaultPort = 7000
+
 // quicConfig is tuned for links that cross a tunnel such as a Tailscale subnet
 // route, where the first packets go through a relay and paths can switch.
 func quicConfig() *quic.Config {
@@ -180,6 +183,41 @@ func Listen(addr string, id tls.Certificate) (*quic.Listener, error) {
 	return listen(addr, id, proto.Version1)
 }
 
+// HostListener is a listener a host can move: Shutdown ends it and every connection it
+// accepted, and the address is free again when it returns. The socket of a listener from
+// Listen stays open until its last connection has drained, which is fine for a host that
+// stops but not for one that moves and may want the same port back at once.
+type HostListener struct {
+	*quic.Listener
+	tr *quic.Transport
+	pc *net.UDPConn
+}
+
+// ListenHost is Listen for a host that may later move to another address or port.
+func ListenHost(addr string, id tls.Certificate) (*HostListener, error) {
+	ua, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		return nil, err
+	}
+	pc, err := net.ListenUDP("udp", ua)
+	if err != nil {
+		return nil, err
+	}
+	tr := &quic.Transport{Conn: pc}
+	ln, err := tr.Listen(serverTLS(id, proto.Version1), quicConfig())
+	if err != nil {
+		pc.Close()
+		return nil, err
+	}
+	return &HostListener{Listener: ln, tr: tr, pc: pc}, nil
+}
+
+// Shutdown ends the listener and its connections and gives the address back.
+func (l *HostListener) Shutdown() {
+	l.tr.Close()
+	l.pc.Close()
+}
+
 // listen is Listen offering control protocols up to maxVersion; 0 behaves like a
 // host from before version negotiation existed.
 func listen(addr string, id tls.Certificate, maxVersion int) (*quic.Listener, error) {
@@ -221,17 +259,28 @@ func Probe(ctx context.Context, addr string, id tls.Certificate) (string, error)
 
 // PinnedFingerprint is the fingerprint remembered for the host at addr.
 func PinnedFingerprint(hosts *trust.Store, addr string) (string, bool) {
-	return hosts.Get(hostOf(addr))
+	return hosts.Get(pinKey(addr))
 }
 
 // PinHost remembers fp as the identity of the host at addr; later connections
 // must present it. Call it after the user has confirmed the fingerprint.
-func PinHost(hosts *trust.Store, addr, fp string) error { return hosts.Set(hostOf(addr), fp) }
+func PinHost(hosts *trust.Store, addr, fp string) error { return hosts.Set(pinKey(addr), fp) }
 
 // ForgetHost drops the fingerprint remembered for the host at addr, so the next
 // connection to it pins whatever certificate it presents. Use it only after the
 // user has been told why the identity changed and chose to trust the new one.
-func ForgetHost(hosts *trust.Store, addr string) error { return hosts.Delete(hostOf(addr)) }
+func ForgetHost(hosts *trust.Store, addr string) error { return hosts.Delete(pinKey(addr)) }
+
+// pinKey is the key a host's identity is remembered under: the IP alone on the default
+// port, as it always was, and IP:port on any other. One PC can run two hosts with two
+// identities (go-nx on one port, an nx-host on another), and each keeps its own.
+func pinKey(addr string) string {
+	h, p, err := net.SplitHostPort(addr)
+	if err != nil || p == strconv.Itoa(DefaultPort) {
+		return hostOf(addr)
+	}
+	return net.JoinHostPort(h, p)
+}
 
 func hostOf(addr string) string {
 	if h, _, err := net.SplitHostPort(addr); err == nil {

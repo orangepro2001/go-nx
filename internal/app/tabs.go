@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -76,7 +77,7 @@ type connResult struct {
 func normalizeAddr(addr string) string {
 	addr = strings.TrimSpace(addr)
 	if _, _, err := net.SplitHostPort(addr); err != nil {
-		return net.JoinHostPort(addr, "7000")
+		return net.JoinHostPort(addr, strconv.Itoa(remote.DefaultPort))
 	}
 	return addr
 }

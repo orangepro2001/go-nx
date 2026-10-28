@@ -421,6 +421,7 @@ func TestSettingsForTheSessionView(t *testing.T) {
 	r.a.page = PageSettings
 	r.a.ui.Invalidate()
 	r.step(kit.Input{})
+	r.pressButton("set.section.3") // 세션
 	if !r.has("네트워크 문제가 생기면 자동으로 다시 연결") {
 		t.Fatalf("settings: %q", r.texts())
 	}

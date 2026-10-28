@@ -103,7 +103,7 @@ func DialWith(ctx context.Context, addr string, id tls.Certificate, hosts *trust
 		if hosts == nil {
 			return nil, errors.New("remote: no host store and no expected fingerprint to check the host against")
 		}
-		cfg, pin = clientTLSVersions(id, hostOf(addr), hosts, maxV)
+		cfg, pin = clientTLSVersions(id, pinKey(addr), hosts, maxV)
 	}
 	conn, err := quic.DialAddr(ctx, addr, cfg, quicConfig())
 	if err != nil {

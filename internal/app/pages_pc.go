@@ -104,10 +104,7 @@ func (a *App) securityCard(info HostInfo) kit.Node {
 		}},
 		a.body(desc),
 		a.caption(tr.T(i18n.KeyModeSwitchNote)),
-		&kit.Row{Gap: theme.S3, Align: kit.AlignCenter, Children: []kit.Node{
-			&kit.Toggle{ID: "pc.lockout", On: info.Lockout, OnChange: func(on bool) { a.cfg.Host.SetLockout(on); a.ui.Invalidate() }},
-			kit.Grow(1, &kit.Label{Text: tr.T(i18n.KeyLockout), Wrap: true}),
-		}},
+		a.switchRow("pc.lockout", tr.T(i18n.KeyLockout), info.Lockout, a.cfg.Host.SetLockout),
 		a.caption(tr.T(i18n.KeyLockoutDesc)),
 	)
 }
