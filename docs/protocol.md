@@ -83,6 +83,7 @@ type u8 | length u32 | payload [length]
 | `0x02` | Ack | `seq u32` |
 | `0x03` | Input | `opID u64`, `kind u8`, `x i32`, `y i32`, `arg i32`（21 字节） |
 | `0x04` | Text | `opID u64`, 其余全是 UTF-8 文本（≤ **4096** 字节） |
+| `0x05` | ViewSize | `w u16`, `h u16`：请把会话放到一块 w×h（查看器窗口的设备像素）的虚拟显示器上；`0×0` 表示回到主机自己的屏幕。0.9.0 起；只能发给声明了 `CapVirtualDisplay` 的主机 |
 
 主机 → 查看器：
 
@@ -90,6 +91,7 @@ type u8 | length u32 | payload [length]
 |---|---|---|
 | `0x81` | Receipt | `opID u64`, `status u8` |
 | `0x82` | Welcome | `version u16`, `caps u64`, `w u16`, `h u16`, `nameLen u8`, 名字（≤ 64 字节） |
+| `0x83` | DisplayState | `virtual u8`（1 = 会话现在在虚拟显示器上）, `w u16`, `h u16`（实际用的分辨率，驱动只提供一组固定尺寸，可能和请求的不同）, `msgLen u8`, 消息（≤ 255 字节，空表示一切正常，否则是没做成的原因）。0.9.0 起；回应 ViewSize，也可能在主机自己恢复原屏幕时主动发 |
 
 - **Hello** 的 `version` 是查看器会说的最高控制协议版本（现在是 1）；`name` 是查看器的显示名（电脑名），供主机的列表使用，可以为空。非法 UTF-8 被替换为 U+FFFD。
 - **Welcome** 由主机在放行查看器之后、发出第一个画面之前发送，**恰好一次**。`caps` 是主机能做的事；`w`、`h` 是被共享屏幕的尺寸（每个画面也带自己的尺寸，以画面为准）。被拒绝的查看器收不到 Welcome，连接以应用层关闭码结束。
@@ -103,6 +105,7 @@ type u8 | length u32 | payload [length]
 | 1 | `CapWheelH` | 主机理解横向滚轮输入种类 |
 | 2 | `CapResize` | 画面尺寸可能在会话中改变（查看器必须按每个画面头里的尺寸重建缓冲）。主机的屏幕源能刷新时声明 |
 | 3 | `CapCursor` | 主机能把鼠标指针画进画面。**在 Hello 里带这一位表示"请画"**；主机只对要求的查看器画，v0 查看器永远不画 |
+| 4 | `CapVirtualDisplay` | 主机能按查看器发来的尺寸（ViewSize）建一块虚拟显示器并共享它，用 DisplayState 回报结果。只有主机允许、并且装了 Parsec VDD 时才声明（0.9.0 起） |
 
 未知位必须忽略。Windows 主机的屏幕源支持刷新和画指针，所以会声明 `CapResize` 和 `CapCursor`。
 

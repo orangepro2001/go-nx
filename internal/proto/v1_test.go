@@ -3,8 +3,10 @@ package proto
 import (
 	"bytes"
 	"encoding/binary"
+	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // Frames are written out byte by byte from docs/protocol.md, not produced by the
@@ -99,6 +101,32 @@ func TestV1HostMessagesRoundTrip(t *testing.T) {
 	}
 	if m, err = ReadHostMsgV1(&b); err != nil || m.Type != V1Receipt || m.OpID != 5 || m.Status != StatusExecuted {
 		t.Fatalf("receipt = %+v, %v", m, err)
+	}
+}
+
+func TestV1VirtualDisplayMessagesRoundTrip(t *testing.T) {
+	var c bytes.Buffer
+	WriteViewSizeV1(&c, 2560, 1440)
+	WriteViewSizeV1(&c, 0, 0)
+	if m, err := ReadMsgV1(&c); err != nil || m.Type != V1ClientViewSize || m.W != 2560 || m.H != 1440 {
+		t.Fatalf("view size = %+v, %v", m, err)
+	}
+	if m, err := ReadMsgV1(&c); err != nil || m.Type != V1ClientViewSize || m.W != 0 || m.H != 0 {
+		t.Fatalf("no virtual display = %+v, %v", m, err)
+	}
+
+	var h bytes.Buffer
+	WriteDisplayStateV1(&h, DisplayState{Virtual: true, W: 2560, H: 1440})
+	WriteDisplayStateV1(&h, DisplayState{Message: strings.Repeat("驱动", 100)}) // longer than allowed: cut, still valid UTF-8
+	if m, err := ReadHostMsgV1(&h); err != nil || m.Type != V1DisplayState || !m.Display.Virtual || m.Display.W != 2560 || m.Display.H != 1440 || m.Display.Message != "" {
+		t.Fatalf("state = %+v, %v", m, err)
+	}
+	m, err := ReadHostMsgV1(&h)
+	if err != nil || m.Display.Virtual || len(m.Display.Message) > MaxStateMsgLen || !utf8.ValidString(m.Display.Message) || !strings.HasPrefix(m.Display.Message, "驱动驱动") {
+		t.Fatalf("long message = %q, %v", m.Display.Message, err)
+	}
+	if got := (CapVirtualDisplay | CapText).Names(); !slices.Equal(got, []string{"text", "vdisplay"}) {
+		t.Errorf("names = %v", got)
 	}
 }
 

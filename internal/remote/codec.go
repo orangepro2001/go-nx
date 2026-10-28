@@ -35,6 +35,7 @@ type codec interface {
 	writeAck(w io.Writer, seq uint32) error
 	writeInput(w io.Writer, in proto.Input) error
 	writeText(w io.Writer, opID uint64, text string) error
+	writeViewSize(w io.Writer, width, height uint16) error
 
 	// Read by the host.
 	readClientMsg(r io.Reader) (proto.Msg, error)
@@ -42,6 +43,7 @@ type codec interface {
 	// Written by the host.
 	writeReceipt(w io.Writer, opID uint64, status byte) error
 	writeWelcome(w io.Writer, h proto.WelcomeV1) error
+	writeDisplayState(w io.Writer, st proto.DisplayState) error
 
 	// Read by the viewer.
 	readHostMsg(r io.Reader) (proto.HostMsg, error)
@@ -75,6 +77,10 @@ func (codecV0) writeReceipt(w io.Writer, opID uint64, status byte) error {
 	return proto.WriteReceipt(w, opID, status)
 }
 func (codecV0) writeWelcome(io.Writer, proto.WelcomeV1) error  { return nil }
+func (codecV0) writeViewSize(io.Writer, uint16, uint16) error  { return ErrUnsupported }
+func (codecV0) writeDisplayState(io.Writer, proto.DisplayState) error {
+	return nil // a v0 viewer never asks for a virtual display
+}
 func (codecV0) readHostMsg(r io.Reader) (proto.HostMsg, error) { return proto.ReadHostMsgV0(r) }
 
 // codecV1 frames every control message and lets either side be newer than the
@@ -95,4 +101,10 @@ func (codecV1) writeReceipt(w io.Writer, opID uint64, status byte) error {
 	return proto.WriteReceiptV1(w, opID, status)
 }
 func (codecV1) writeWelcome(w io.Writer, h proto.WelcomeV1) error { return proto.WriteWelcomeV1(w, h) }
+func (codecV1) writeViewSize(w io.Writer, width, height uint16) error {
+	return proto.WriteViewSizeV1(w, width, height)
+}
+func (codecV1) writeDisplayState(w io.Writer, st proto.DisplayState) error {
+	return proto.WriteDisplayStateV1(w, st)
+}
 func (codecV1) readHostMsg(r io.Reader) (proto.HostMsg, error)    { return proto.ReadHostMsgV1(r) }

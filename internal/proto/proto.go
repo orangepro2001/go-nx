@@ -77,6 +77,7 @@ type Msg struct {
 	Version  uint16 // MsgHello in v1
 	Caps     Caps   // MsgHello in v1
 	Name     string // MsgHello in v1
+	W, H     uint16 // V1ClientViewSize
 }
 
 func WriteHello(w io.Writer, password string) error {

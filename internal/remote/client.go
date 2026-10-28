@@ -59,6 +59,9 @@ type Client struct {
 	host     HostInfo
 	hostOnce sync.Once
 	assumed  atomic.Uint64 // abilities the caller vouches for
+
+	display   atomic.Pointer[proto.DisplayState] // the host's last word on a virtual display
+	onDisplay atomic.Pointer[func()]             // told when it changes
 }
 
 // DialOptions are the optional parts of a connection.
@@ -334,6 +337,31 @@ func (c *Client) SendText(opID uint64, text string) error {
 	return c.out.push(outMsg{write: func(w io.Writer) error { return c.cd.writeText(w, opID, text) }})
 }
 
+// SendViewSize asks the host to show the session on a virtual display of w x h device
+// pixels, or, with 0 x 0, on its own screen again. What came of it arrives later
+// (DisplayState). It returns ErrUnsupported unless the host said it can
+// (proto.CapVirtualDisplay).
+func (c *Client) SendViewSize(w, h int) error {
+	if !c.Supports(proto.CapVirtualDisplay) {
+		return ErrUnsupported
+	}
+	ww, hh := uint16(min(max(w, 0), 0xFFFF)), uint16(min(max(h, 0), 0xFFFF))
+	return c.out.push(outMsg{write: func(wr io.Writer) error { return c.cd.writeViewSize(wr, ww, hh) }})
+}
+
+// DisplayState is what the host last said about the virtual display; ok is false until it
+// has said anything.
+func (c *Client) DisplayState() (st proto.DisplayState, ok bool) {
+	if p := c.display.Load(); p != nil {
+		return *p, true
+	}
+	return proto.DisplayState{}, false
+}
+
+// OnDisplayState sets what is called, from the goroutine that reads the host, when the host
+// reports on the virtual display.
+func (c *Client) OnDisplayState(f func()) { c.onDisplay.Store(&f) }
+
 // Run receives screen updates and receipts until the connection ends.
 // onFrame is called synchronously after each update is applied to the frame it
 // is given, with the rectangles that update changed; the frame must not be
@@ -355,6 +383,12 @@ func (c *Client) Run(ctx context.Context, onFrame func(*tile.Frame, []tile.Rect)
 			case proto.V1Receipt:
 				if onReceipt != nil {
 					onReceipt(m.OpID, m.Status)
+				}
+			case proto.V1DisplayState:
+				st := m.Display
+				c.display.Store(&st)
+				if f := c.onDisplay.Load(); f != nil {
+					(*f)()
 				}
 			}
 		}

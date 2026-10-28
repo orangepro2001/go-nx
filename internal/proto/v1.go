@@ -25,12 +25,15 @@ const (
 	CapWheelH                  // the host understands the horizontal wheel input kind
 	CapResize                  // the frame size may change during a session
 	CapCursor                  // the host draws the pointer into the frames
+	// CapVirtualDisplay: the host can show the session on a virtual display made at the size
+	// the viewer asks for (V1ClientViewSize), and reports how that went (V1DisplayState).
+	CapVirtualDisplay
 )
 
 // Has reports whether every ability in want is present.
 func (c Caps) Has(want Caps) bool { return c&want == want }
 
-var capNames = [...]string{"text", "wheelh", "resize", "cursor"}
+var capNames = [...]string{"text", "wheelh", "resize", "cursor", "vdisplay"}
 
 // Names lists the abilities in c for logs and tooling, in bit order. A bit this
 // build does not know is named "bitN", so that what a newer peer advertises is
@@ -60,9 +63,14 @@ const (
 	V1ClientAck   byte = MsgAck
 	V1ClientInput byte = MsgInput
 	V1ClientText  byte = MsgText
+	// V1ClientViewSize asks a host that has CapVirtualDisplay to show the session on a
+	// virtual display of this size (the viewer's window, in device pixels); 0 x 0 asks for
+	// the host's own screen again. It has no v0 equivalent.
+	V1ClientViewSize byte = 0x05
 
-	V1Receipt byte = 0x81 // host -> client; same value as v0's MsgReceipt
-	V1Welcome byte = 0x82 // host -> client, once, right after the viewer is admitted
+	V1Receipt      byte = 0x81 // host -> client; same value as v0's MsgReceipt
+	V1Welcome      byte = 0x82 // host -> client, once, right after the viewer is admitted
+	V1DisplayState byte = 0x83 // host -> client: whether the session is on a virtual display, and why not
 )
 
 // Limits. A length prefix is checked against MaxCtrlPayload before anything is
@@ -115,6 +123,18 @@ type HelloV1 struct {
 	Name     string // the viewer's display name, for the host's lists; may be empty
 }
 
+// DisplayState is what a host with CapVirtualDisplay says after a V1ClientViewSize: whether
+// the session is on a virtual display now, at what size (which may differ from the one asked
+// for: the driver offers a list of sizes), and, if something went wrong, what.
+type DisplayState struct {
+	Virtual bool
+	W, H    uint16
+	Message string // empty when all is well; at most MaxStateMsgLen bytes
+}
+
+// MaxStateMsgLen is the longest DisplayState message.
+const MaxStateMsgLen = 255
+
 // WelcomeV1 is the host's answer once it has admitted the viewer.
 type WelcomeV1 struct {
 	Version uint16
@@ -159,6 +179,27 @@ func WriteTextV1(w io.Writer, opID uint64, text string) error {
 		return errors.New("proto: text too long")
 	}
 	return WriteFrame(w, V1ClientText, append(binary.LittleEndian.AppendUint64(nil, opID), text...))
+}
+
+// WriteViewSizeV1 asks for a virtual display of w x h; 0 x 0 asks for none.
+func WriteViewSizeV1(w io.Writer, width, height uint16) error {
+	b := binary.LittleEndian.AppendUint16(nil, width)
+	return WriteFrame(w, V1ClientViewSize, binary.LittleEndian.AppendUint16(b, height))
+}
+
+func WriteDisplayStateV1(w io.Writer, st DisplayState) error {
+	msg := st.Message
+	if len(msg) > MaxStateMsgLen {
+		msg = strings.ToValidUTF8(msg[:MaxStateMsgLen], "")
+	}
+	b := []byte{0}
+	if st.Virtual {
+		b[0] = 1
+	}
+	b = binary.LittleEndian.AppendUint16(b, st.W)
+	b = binary.LittleEndian.AppendUint16(b, st.H)
+	b = append(b, byte(len(msg)))
+	return WriteFrame(w, V1DisplayState, append(b, msg...))
 }
 
 func WriteReceiptV1(w io.Writer, opID uint64, status byte) error {
@@ -254,6 +295,8 @@ func ReadMsgV1(r io.Reader) (Msg, error) {
 				OpID: f.u64(), Kind: f.u8(),
 				X: int32(f.u32()), Y: int32(f.u32()), Arg: int32(f.u32()),
 			}
+		case V1ClientViewSize:
+			m.W, m.H = f.u16(), f.u16()
 		case V1ClientText:
 			m.OpID = f.u64()
 			if f.err == nil {
@@ -274,10 +317,11 @@ func ReadMsgV1(r io.Reader) (Msg, error) {
 
 // HostMsg is a decoded host->client control message.
 type HostMsg struct {
-	Type    byte // V1Receipt or V1Welcome
+	Type    byte // V1Receipt, V1Welcome or V1DisplayState
 	OpID    uint64
 	Status  byte
 	Welcome WelcomeV1
+	Display DisplayState
 }
 
 // ReadHostMsgV1 reads the next host->client message that this version knows,
@@ -300,6 +344,10 @@ func ReadHostMsgV1(r io.Reader) (HostMsg, error) {
 			m.Welcome.W = f.u16()
 			m.Welcome.H = f.u16()
 			m.Welcome.Name = f.str(MaxNameLen)
+		case V1DisplayState:
+			m.Display.Virtual = f.u8() == 1
+			m.Display.W, m.Display.H = f.u16(), f.u16()
+			m.Display.Message = f.str(MaxStateMsgLen)
 		default:
 			continue
 		}

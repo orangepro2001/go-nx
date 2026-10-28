@@ -615,3 +615,51 @@ func TestPairingCodeEndToEnd(t *testing.T) {
 		t.Fatalf("paired device with no password: %v", err)
 	}
 }
+
+// A viewer asks for a virtual display of its size; the host hears the size and answers with
+// what it did, which the viewer can read and is told of. A host that cannot is never asked.
+func TestViewSizeReachesTheHostAndItsAnswerComesBack(t *testing.T) {
+	asked := make(chan [2]int, 2)
+	r := start(t, Options{OnViewSize: func(w, h int, report func(proto.DisplayState)) {
+		asked <- [2]int{w, h}
+		go report(proto.DisplayState{Virtual: w > 0, W: uint16(w), H: uint16(h)})
+	}}, true, 0)
+	if r.dialErr != nil {
+		t.Fatal(r.dialErr)
+	}
+	told := make(chan struct{}, 2)
+	r.client.OnDisplayState(func() { told <- struct{}{} })
+	if !r.client.Supports(proto.CapVirtualDisplay) {
+		t.Fatal("a host with OnViewSize does not advertise CapVirtualDisplay")
+	}
+	if err := r.client.SendViewSize(1920, 1080); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-asked:
+		if got != [2]int{1920, 1080} {
+			t.Fatalf("the host was asked for %v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the host never heard the size")
+	}
+	select {
+	case <-told:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the viewer was not told of the host's answer")
+	}
+	if st, ok := r.client.DisplayState(); !ok || !st.Virtual || st.W != 1920 || st.H != 1080 {
+		t.Errorf("display state = %+v, %v", st, ok)
+	}
+
+	plain := start(t, Options{}, true, 0)
+	if plain.dialErr != nil {
+		t.Fatal(plain.dialErr)
+	}
+	if plain.client.Supports(proto.CapVirtualDisplay) {
+		t.Error("a host without OnViewSize advertises CapVirtualDisplay")
+	}
+	if err := plain.client.SendViewSize(800, 600); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("asking a host that cannot: %v, want ErrUnsupported", err)
+	}
+}

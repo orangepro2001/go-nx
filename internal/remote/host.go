@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -132,6 +133,12 @@ type Options struct {
 	// OnSourceChanged, if set, is called with the new size when a Refresher source
 	// reports that its geometry changed, so the caller can retarget the injector.
 	OnSourceChanged func(w, h int)
+	// OnViewSize, if set, is called when a v1 viewer asks for the session to be shown on a
+	// virtual display of w x h (0 x 0: on the host's own screen again). report sends the
+	// viewer what came of it, and may be called later from any goroutine. OnViewSize runs
+	// on the goroutine that reads the viewer and must not block. Setting it advertises
+	// CapVirtualDisplay.
+	OnViewSize func(w, h int, report func(proto.DisplayState))
 }
 
 // PeerInfo is what a viewer told the host about itself.
@@ -328,8 +335,19 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 		default:
 		}
 	}
+	// Receipts and display states are written from different goroutines.
+	out := &syncWriter{w: ctrl}
+	var onViewSize func(w, h int)
+	if opt.OnViewSize != nil {
+		report := func(st proto.DisplayState) {
+			if err := cd.writeDisplayState(out, st); err != nil && opt.OnError != nil {
+				opt.OnError(fmt.Errorf("display state not sent: %w", err))
+			}
+		}
+		onViewSize = func(w, h int) { opt.OnViewSize(w, h, report) }
+	}
 	readErr := make(chan error, 1)
-	go func() { readErr <- readControl(ctrl, cd, input, dd, &lastAck, onInput) }()
+	go func() { readErr <- readControl(ctrl, out, cd, input, dd, &lastAck, onInput, onViewSize) }()
 
 	cur := tile.NewFrame(w, h)
 	var diff tile.Differ
@@ -500,7 +518,7 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 	}
 }
 
-func readControl(ctrl *quic.Stream, cd codec, input inputSink, dd *proto.Dedup, lastAck *atomic.Uint32, onInput func()) error {
+func readControl(ctrl io.Reader, out io.Writer, cd codec, input inputSink, dd *proto.Dedup, lastAck *atomic.Uint32, onInput func(), onViewSize func(w, h int)) error {
 	for {
 		m, err := cd.readClientMsg(ctrl)
 		if err != nil {
@@ -513,12 +531,16 @@ func readControl(ctrl *quic.Stream, cd codec, input inputSink, dd *proto.Dedup, 
 		case proto.MsgAck:
 			lastAck.Store(m.Seq)
 		case proto.MsgInput:
-			if err := runOp(ctrl, cd, dd, m.Input.OpID, func() error { return input.Inject(m.Input) }); err != nil {
+			if err := runOp(out, cd, dd, m.Input.OpID, func() error { return input.Inject(m.Input) }); err != nil {
 				return err
 			}
 		case proto.MsgText:
-			if err := runOp(ctrl, cd, dd, m.OpID, func() error { return input.InjectText(m.Text) }); err != nil {
+			if err := runOp(out, cd, dd, m.OpID, func() error { return input.InjectText(m.Text) }); err != nil {
 				return err
+			}
+		case proto.V1ClientViewSize:
+			if onViewSize != nil {
+				onViewSize(int(m.W), int(m.H))
 			}
 		}
 	}
@@ -528,7 +550,7 @@ func readControl(ctrl *quic.Stream, cd codec, input inputSink, dd *proto.Dedup, 
 // opID 0 is fire-and-forget: it runs every time and gets no receipt. A repeated
 // opID (a retry after a lost receipt) is not run again; its first receipt is
 // sent again.
-func runOp(ctrl *quic.Stream, cd codec, dd *proto.Dedup, opID uint64, run func() error) error {
+func runOp(out io.Writer, cd codec, dd *proto.Dedup, opID uint64, run func() error) error {
 	if opID == 0 {
 		_ = run()
 		return nil
@@ -541,13 +563,28 @@ func runOp(ctrl *quic.Stream, cd codec, dd *proto.Dedup, opID uint64, run func()
 		}
 		dd.Put(opID, status)
 	}
-	return cd.writeReceipt(ctrl, opID, status)
+	return cd.writeReceipt(out, opID, status)
+}
+
+// syncWriter lets several goroutines write whole messages to one stream.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
 }
 
 // hostCaps is what this host tells a v1 viewer it can do: what the injector is
 // able to do, plus whatever the caller adds.
 func hostCaps(inj Injector, src Source, opt Options) proto.Caps {
 	caps := proto.CapWheelH | opt.Caps
+	if opt.OnViewSize != nil {
+		caps |= proto.CapVirtualDisplay
+	}
 	if _, ok := inj.(TextInjector); ok {
 		caps |= proto.CapText
 	}
