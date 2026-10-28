@@ -28,6 +28,7 @@ const (
 	CloseReplaced    = 3 // another viewer took over
 	CloseLocked      = 4 // too many wrong passwords; try again later
 	CloseRevoked     = 5 // this device was removed from the host's paired devices
+	CloseBusy        = 6 // too many connections are waiting to be authenticated; try again shortly
 )
 
 // ErrHostChanged means a host's certificate differs from the one remembered for its address.
@@ -132,3 +133,6 @@ func hostOf(addr string) string {
 	}
 	return addr
 }
+
+// sourceHost is the part of a remote address that identifies a PC: its IP.
+func sourceHost(addr string) string { return hostOf(addr) }

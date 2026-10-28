@@ -38,6 +38,7 @@ type Options struct {
 	OnAuthed        func()           // called once the viewer is accepted
 	OnError         func(error)      // non-fatal session problems
 	InputController *InputController // shared controller for releasing inputs across sessions
+	Gate            *Gate            // optional cap on connections awaiting authentication
 }
 
 // minRate is the slowest link we still expect to deliver a frame on. A frame's
@@ -78,6 +79,18 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 	if opt.AckTimeout <= 0 {
 		opt.AckTimeout = time.Second
 	}
+	// Hold a pre-authentication slot until the host has decided about this viewer.
+	leaveGate := func() {}
+	if opt.Gate != nil {
+		leave, ok := opt.Gate.Enter(conn.RemoteAddr().String())
+		if !ok {
+			closeWithDefault = false
+			conn.CloseWithError(CloseBusy, "too many connections waiting")
+			return ErrDenied
+		}
+		leaveGate = leave
+	}
+	defer leaveGate()
 	var peer string
 	if certs := conn.ConnectionState().TLS.PeerCertificates; len(certs) > 0 {
 		peer = trust.Fingerprint(certs[0].Raw)
@@ -104,6 +117,7 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 			opt.OnError(err)
 		}
 	}
+	leaveGate() // decided: no longer waiting to be authenticated
 	if verdict != trust.Allowed {
 		code := map[trust.Verdict]quic.ApplicationErrorCode{
 			trust.BadPassword: CloseBadPassword, trust.Locked: CloseLocked,

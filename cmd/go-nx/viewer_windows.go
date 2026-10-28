@@ -301,6 +301,8 @@ func describe(err error) string {
 			return "Too many wrong passwords; try again in a minute"
 		case remote.CloseReplaced:
 			return "Another client took over this host"
+		case remote.CloseBusy:
+			return "The host is busy with other connection attempts; try again in a moment"
 		case remote.CloseRevoked:
 			return "This PC was removed from the host's paired devices. Pair it again, or enter the host's password"
 		}

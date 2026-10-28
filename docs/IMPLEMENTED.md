@@ -50,7 +50,8 @@
 | 认证默认值 | **默认关闭** | `require_auth` 仅当设置值为 `"1"` 才开；关闭时任何能连到端口的人都被允许 | `cmd/go-nx/host_windows.go:72`、`internal/trust/policy.go:35,77` |
 | 证书/指纹 | 已实现 | 自签证书；客户端 TOFU 固定主机指纹，变化则 `ErrHostChanged` 硬失败；服务端要求任意客户端证书，信任由 `Policy` 决定 | `tls.go:57,72-91` |
 | 配对 | 部分 | 主机上点按钮开 2 分钟窗口，**下一台**连入设备被信任。**没有** 6 位码、没有指纹核对、没有本机确认弹窗 | `policy.go:86-90`、`host_windows.go:25` |
-| 密码 | 部分 | 可选；错 5 次**全局**锁 1 分钟，计数不衰减，不按来源 | `policy.go:20-21,96-106` |
+| 密码 | 部分 | 可选。错误次数**按来源 IP** 计（端口不算）：10 分钟内错 5 次锁该来源 1 分钟，连续锁定每次加倍，上限 15 分钟；安静 10 分钟后失败计数清零；输对一次清除该来源的记录；来源表上限 1024 条。配对过的设备不受影响。（2026-10-28 改；此前是全局 1 分钟/5 次、不衰减） | `internal/trust/policy.go` |
+| 未认证连接上限 | 已实现（2026-10-28） | `remote.Gate`：等待认证的连接总数 ≤ 16、同一 IP ≤ 4，超出的以 `CloseBusy`(6) 拒绝；Hello 10 s 内未到也会放弃。QUIC 握手本身的并发未限制 | `internal/remote/gate.go`、`host.go`、`cmd/go-nx/host_windows.go` |
 | 首次连接 | 风险 | 密码在校验主机指纹之前就发出（TOFU 首次） | `internal/remote/client.go:45` |
 | 撤销已信任设备 | 部分（2026-10-28） | `Store.Delete/Clear/Keys`、`Policy.Revoke/RevokeAll`；主页新增两次点击确认的 "Forget paired devices"，会清空配对并以 `CloseRevoked`(5) 断开当前控制者。**还没有逐设备列表**（只能全部忘记） | `internal/trust`、`internal/ui/home.go`、`cmd/go-nx/host_windows.go` |
 | 忘记主机身份（控制端） | 已实现（2026-10-28） | 主机证书变化时仍硬失败（`ErrHostChanged`）；用户确认后在该标签页按 `Ctrl+F` 忘记旧指纹，再 `Enter` 连接并重新固定。此前提示的"手改 hosts.json"在程序运行时无效 | `remote.ForgetHost`、`cmd/go-nx/main_windows.go`、`viewer_windows.go` |

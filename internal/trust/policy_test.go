@@ -1,6 +1,8 @@
 package trust
 
 import (
+	"fmt"
+	"net"
 	"path/filepath"
 	"testing"
 	"time"
@@ -130,4 +132,99 @@ func TestRevokeAllForgetsEveryDevice(t *testing.T) {
 	for _, fp := range []string{"aa", "bb", "cc"} {
 		check(t, p, fp, "", Untrusted)
 	}
+}
+
+func checkFrom(t *testing.T, p *Policy, addr, pw string, want Verdict) {
+	t.Helper()
+	got, err := p.Check("fp-"+addr, addr, pw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("Check from %s (%q) = %v, want %v", addr, pw, got, want)
+	}
+}
+
+func TestLockoutIsPerSource(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.SetPassword("s3cret")
+	for i := 0; i < maxFailures; i++ {
+		checkFrom(t, p, "10.0.0.66:4000", "nope", BadPassword)
+	}
+	checkFrom(t, p, "10.0.0.66:4001", "s3cret", Locked) // same address, other port: still the same source
+	checkFrom(t, p, "10.0.0.7:4000", "s3cret", Allowed) // a different PC is not affected
+}
+
+func TestFailuresDecayWhenTheSourceGoesQuiet(t *testing.T) {
+	p, c := newPolicy(t)
+	p.SetPassword("s3cret")
+	for i := 0; i < maxFailures-1; i++ {
+		checkFrom(t, p, "10.0.0.66:1", "nope", BadPassword)
+	}
+	c.t = c.t.Add(failWindow + time.Second) // quiet for longer than the window
+	for i := 0; i < maxFailures-1; i++ {
+		checkFrom(t, p, "10.0.0.66:1", "nope", BadPassword) // still below the limit
+	}
+	checkFrom(t, p, "10.0.0.66:1", "s3cret", Allowed)
+}
+
+func TestRepeatedLockoutsGetLonger(t *testing.T) {
+	p, c := newPolicy(t)
+	p.SetPassword("s3cret")
+	src := "10.0.0.66:1"
+	trip := func() {
+		for i := 0; i < maxFailures; i++ {
+			checkFrom(t, p, src, "nope", BadPassword)
+		}
+	}
+	trip()
+	c.t = c.t.Add(lockout - time.Second)
+	checkFrom(t, p, src, "s3cret", Locked)
+	c.t = c.t.Add(2 * time.Second) // first lockout (1 min) is over
+	trip()
+	c.t = c.t.Add(lockout + time.Second) // 1 min later: the second lockout is 2 min
+	checkFrom(t, p, src, "s3cret", Locked)
+	c.t = c.t.Add(lockout) // 2 min in total
+	checkFrom(t, p, src, "s3cret", Allowed)
+}
+
+func TestLockoutNeverExceedsTheCap(t *testing.T) {
+	p, c := newPolicy(t)
+	p.SetPassword("s3cret")
+	src := "10.0.0.66:1"
+	for round := 0; round < 12; round++ {
+		for i := 0; i < maxFailures; i++ {
+			checkFrom(t, p, src, "nope", BadPassword)
+		}
+		c.t = c.t.Add(maxLockout + time.Second)
+	}
+	checkFrom(t, p, src, "s3cret", Allowed)
+}
+
+func TestSourceTableStaysBounded(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.SetPassword("s3cret")
+	for i := 0; i < 5*maxSources; i++ {
+		addr := net.JoinHostPort(fmt.Sprintf("10.%d.%d.%d", i>>16&255, i>>8&255, i&255), "1")
+		checkFrom(t, p, addr, "nope", BadPassword)
+	}
+	p.mu.Lock()
+	n := len(p.sources)
+	p.mu.Unlock()
+	if n > maxSources {
+		t.Fatalf("tracking %d sources, cap is %d", n, maxSources)
+	}
+}
+
+func TestCorrectPasswordClearsThatSourcesFailures(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.SetPassword("s3cret")
+	for i := 0; i < maxFailures-1; i++ {
+		checkFrom(t, p, "10.0.0.66:1", "nope", BadPassword)
+	}
+	checkFrom(t, p, "10.0.0.66:1", "s3cret", Allowed)
+	for i := 0; i < maxFailures-1; i++ { // the count started over
+		checkFrom(t, p, "10.0.0.66:1", "nope", BadPassword)
+	}
+	checkFrom(t, p, "10.0.0.66:1", "s3cret", Allowed)
 }

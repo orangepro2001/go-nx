@@ -13,7 +13,7 @@ go-nx：Windows 10/11 上的轻量局域网远程控制。纯 Go、无 cgo、单
 
 - 已接入本机 release-publish：app `go-nx`，平台 `win-x64`，**0.1.0（versionCode 100）已发布**到线上。
 - 应用内自更新已实现并通过测试；**Windows 实机上的托盘、替换 exe、重启流程还没验证过**。
-- 当前工作是 [`ROADMAP.md`](ROADMAP.md) 的开发计划：**阶段 0 完成**（基线、状态文档、CI）；**阶段 1 进行中**，已完成「恶意主机上限 + fuzz」「JSON 原子写 + 损坏文件隔离」，「撤销已信任设备 / 忘记主机身份」（逐设备列表还没有）。下一项是按来源限流。
+- 当前工作是 [`ROADMAP.md`](ROADMAP.md) 的开发计划：**阶段 0 完成**（基线、状态文档、CI）；**阶段 1 进行中**，已完成「恶意主机上限 + fuzz」「JSON 原子写 + 损坏文件隔离」，「撤销已信任设备 / 忘记主机身份」（逐设备列表还没有）。「按来源限流 + 未认证连接上限」已完成。下一项是监听地址可选。
 - 所有提交已推送到 `origin main`；CI（`.github/workflows/ci.yml`，linux + windows-latest）在 `820d1f7` 上两个作业都通过。
 - 全局 git 身份：`orangepro2001 <yangziyi0801@gmail.com>`（2026-10-28 设置）。`98bda14` 的作者是 `tony`，没有改写。
 

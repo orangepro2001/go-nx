@@ -179,6 +179,7 @@ func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *injec
 		active          *quic.Conn
 		dd              = proto.NewDedup()
 		inputController = remote.NewInputController(inj)
+		gate            = remote.NewGate(16, 4) // connections waiting to be authenticated: in all, and per address
 	)
 	h.mu.Lock()
 	h.kick = func(code quic.ApplicationErrorCode, reason string) {
@@ -201,6 +202,7 @@ func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *injec
 				FPS:             fps,
 				Check:           h.check,
 				InputController: inputController,
+				Gate:            gate,
 				OnError:         func(err error) { log.Printf("session cleanup: %v", err) },
 				OnAuthed: func() {
 					mu.Lock()

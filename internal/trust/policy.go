@@ -2,6 +2,7 @@ package trust
 
 import (
 	"crypto/subtle"
+	"net"
 	"sync"
 	"time"
 )
@@ -16,10 +17,23 @@ const (
 	Locked              // too many wrong passwords recently
 )
 
+// Limits on guessing the host password. They apply per source address, so one
+// PC hammering the host cannot lock anyone else out.
 const (
-	maxFailures = 5
-	lockout     = time.Minute
+	maxFailures = 5                // wrong passwords from one source before it is locked out
+	lockout     = time.Minute      // the first lockout; each one in a row doubles it
+	maxLockout  = 15 * time.Minute // ...up to this
+	failWindow  = 10 * time.Minute // failures older than this are forgotten
+	maxSources  = 1024             // sources tracked at once; the table never grows past this
 )
+
+// source is what the policy remembers about one address that guessed wrong.
+type source struct {
+	fails       int       // wrong passwords inside failWindow
+	lastFail    time.Time // when the latest one happened
+	lockedUntil time.Time
+	strikes     int // lockouts in a row; each one lasts twice as long as the last
+}
 
 // Policy decides who may control this PC. Verification is optional: until
 // SetRequireAuth(true), every viewer is allowed. Once it is on, in order:
@@ -35,12 +49,13 @@ type Policy struct {
 	requireAuth bool
 	password    string
 	pairUntil   time.Time
-	fails       int
-	lockedUntil time.Time
+	sources     map[string]*source // by host part of the address, for password attempts
 	now         func() time.Time
 }
 
-func NewPolicy(trusted *Store) *Policy { return &Policy{trusted: trusted, now: time.Now} }
+func NewPolicy(trusted *Store) *Policy {
+	return &Policy{trusted: trusted, now: time.Now, sources: map[string]*source{}}
+}
 
 // SetRequireAuth turns verification on or off.
 func (p *Policy) SetRequireAuth(on bool) {
@@ -100,17 +115,66 @@ func (p *Policy) Check(fp, addr, password string) (Verdict, error) {
 	if password == "" || p.password == "" {
 		return Untrusted, nil
 	}
-	if p.now().Before(p.lockedUntil) {
+	now, key := p.now(), sourceKey(addr)
+	src := p.sources[key]
+	if src != nil && now.Before(src.lockedUntil) {
 		return Locked, nil
 	}
 	if subtle.ConstantTimeCompare([]byte(password), []byte(p.password)) == 1 {
-		p.fails = 0
+		delete(p.sources, key)
 		return Allowed, nil
 	}
-	p.fails++
-	if p.fails >= maxFailures {
-		p.fails = 0
-		p.lockedUntil = p.now().Add(lockout)
+	if src == nil {
+		p.makeRoom(now)
+		src = &source{}
+		p.sources[key] = src
+	}
+	if now.Sub(src.lastFail) > failWindow {
+		src.fails = 0 // quiet for a while: earlier mistakes no longer count
+	}
+	if now.Sub(src.lastFail) > 2*maxLockout {
+		src.strikes = 0 // and long enough that the escalation starts over too
+	}
+	src.fails++
+	src.lastFail = now
+	if src.fails >= maxFailures {
+		src.fails = 0
+		src.strikes++
+		d := lockout << min(src.strikes-1, 10)
+		src.lockedUntil = now.Add(min(d, maxLockout))
 	}
 	return BadPassword, nil
+}
+
+// sourceKey is the part of addr that identifies a PC: its IP, not the port,
+// which changes with every connection.
+func sourceKey(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
+}
+
+// makeRoom keeps the table below maxSources before a new source is added: it
+// drops sources whose lockout and failures have run out, and if that is not
+// enough, the one that failed longest ago. Callers hold p.mu.
+func (p *Policy) makeRoom(now time.Time) {
+	if len(p.sources) < maxSources {
+		return
+	}
+	for k, s := range p.sources {
+		if !now.Before(s.lockedUntil) && now.Sub(s.lastFail) > failWindow {
+			delete(p.sources, k)
+		}
+	}
+	for len(p.sources) >= maxSources {
+		var oldest string
+		var at time.Time
+		for k, s := range p.sources {
+			if oldest == "" || s.lastFail.Before(at) {
+				oldest, at = k, s.lastFail
+			}
+		}
+		delete(p.sources, oldest)
+	}
 }
