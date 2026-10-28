@@ -1,6 +1,6 @@
 # 上下文恢复（新会话先读这个）
 
-最后更新：2026-10-28。每次任务完成后更新本文件，并另写一份带日期的 `docs/handoff-*.md`。
+最后更新：2026-10-29。每次任务完成后更新本文件，并另写一份带日期的 `docs/handoff-*.md`。
 
 ## 项目一页纸
 
@@ -9,10 +9,12 @@ go-nx：Windows 10/11 上的轻量局域网远程控制。纯 Go、无 cgo、单
 配置、身份、信任列表、日志都在 `%AppData%\go-nx\`（`go-nx.log`）。单实例用命名互斥量 `Local\go-nx-single-instance`。
 仓库：`git@github.com:orangepro2001/go-nx.git`，本地 `main`。设计文档在 `docs/`（`minimal-plan.md` 是定稿范围）。
 
-## 当前状态（2026-10-28 晚）
+## 当前状态（2026-10-29）
 
-- **最新一轮（配对被拒）**：用户报告 0.7.0 上配对码和密码都被拒（截图："已断开：密码或配对码错误"）。没拿到日志，根因未在真机确认；修了代码里能让正确的码 / 密码被发错或判错的几处（码带空格、重试沿用错密码且无处修改、密码框看不到内容、窗口 2 分钟太短、托盘重复点换码、日志不说原因），见 `docs/handoff-2026-10-28-pairing-refused.md`，真机验证是 `ACCEPTANCE.md` H35。发布为 go-nx 0.7.1 与 go-nx-core 0.2.1（`trust.Policy` 与 nx-host 的日志也变了）。
-- **线上最新**：`go-nx` **0.7.1**（配对被拒的修复，versionCode 701，sha256 `30b796f1…2729707e`；0.7.0 是新界面）、`go-nx-core` **0.2.1**（`nx-host` / `nx-probe` / 契约的 zip，**单独的应用**，`CORE_VERSION`，versionCode 201）。完整哈希见 `compat-matrix.md`。0.6.0 是动态帧率；0.5.0 及更早仍在列表里。release-publish 现在跑在 **podman 容器** `release-publish` 里（`~/dev/release-publish/deploy/container.sh`，systemd 单元不再使用），应用有 `go-nx`、`go-nx-core`、`clipbridge`。交接见 `docs/handoff-2026-10-28-ui-implementation.md`。
+- **最新一轮（端口被占 → 端口可配置）**：用户在 0.7.1 上被拒（"密码错误次数过多"），并确认 minipc 已是开放模式。从 tony-ai-pc-1 探测：minipc 的 tailnet 地址 `100.109.77.29:7000` 回应的是另一个处于严格模式的主机（ID `28AF F5AC A803 77E7`，用户认为是 NightDesk 的 nx-host），公网地址上才是 go-nx（`CFFC C257 D5F1 8299`）——另一个程序单独绑了 tailnet IP，截走了连接。0.7.2：主机检测并警告同端口的其他程序、锁定可关、被拒卡片显示对方 ID（`handoff-2026-10-29-port-shared.md`，H36）。0.8.0：设置 → 网络改端口 / 监听地址（立即生效）、设置页分区、开机启动、Win+L 开关、控制端按 `IP:端口` 记主机身份（`handoff-2026-10-29-settings-network.md`，H37）。**安全**：minipc 的 go-nx 当时是开放模式且公网可达，已提醒用户切回严格或只监听 Tailscale 地址。等用户在 minipc 上把端口改成 7001 后回报。
+
+- **上一轮（配对被拒）**：用户报告 0.7.0 上配对码和密码都被拒（截图："已断开：密码或配对码错误"）。没拿到日志，根因未在真机确认；修了代码里能让正确的码 / 密码被发错或判错的几处（码带空格、重试沿用错密码且无处修改、密码框看不到内容、窗口 2 分钟太短、托盘重复点换码、日志不说原因），见 `docs/handoff-2026-10-28-pairing-refused.md`，真机验证是 `ACCEPTANCE.md` H35。发布为 go-nx 0.7.1 与 go-nx-core 0.2.1（`trust.Policy` 与 nx-host 的日志也变了）。
+- **线上最新**：`go-nx` **0.8.0**（端口 / 地址可配置、设置分区，versionCode 800，sha256 `4246fb2e…07655b21`；0.7.2 端口被占检测，0.7.1 配对被拒的修复，0.7.0 是新界面）、`go-nx-core` **0.2.1**（之后 `internal/remote`、`internal/trust` 有改动，但 nx-host / nx-probe 的行为没变，没有重发）（`nx-host` / `nx-probe` / 契约的 zip，**单独的应用**，`CORE_VERSION`，versionCode 201）。完整哈希见 `compat-matrix.md`。0.6.0 是动态帧率；0.5.0 及更早仍在列表里。release-publish 现在跑在 **podman 容器** `release-publish` 里（`~/dev/release-publish/deploy/container.sh`，systemd 单元不再使用），应用有 `go-nx`、`go-nx-core`、`clipbridge`。交接见 `docs/handoff-2026-10-28-ui-implementation.md`。
 - **这一轮做了三件事**（用户："开始实现ui。核心文件作为单独应用发布，要动态帧率。"）：①**动态帧率**（0.6.0）：画面在变 10 fps，控制端操作 30 fps，静止 3 s 后 2 fps，输入立刻唤醒；②**核心单独发布**：`go-nx-core`，版本独立，zip 可复现，`scripts/ship.sh --core`；③**新界面**（U1–U4，0.7.0）：`internal/app` 是可移植的整个应用（页面、对话框、会话、连接流程），`internal/ui/{theme,i18n,text,kit,gfx}` 是工具箱，`cmd/go-nx` 只剩 Windows 适配；旧 `internal/ui` 已删除。
 - **新界面的验证**：布局（四种语言含伪语言 × 四种窗口尺寸）、行为（各流程用假的主机 / 连接 / 平台）、GPU（颜色与朝向、形状位置、裁剪，Xvfb 上与 Windows 运行器上都跑）、真实 `go-nx.exe` 在 Windows 运行器上启动到第一帧（冒烟测试，阻塞）、截图 artifact（`ui-linux`、`ui-windows`，用真实字体）。**没有的**：任何一次在你的 PC 上由人使用——`ACCEPTANCE.md` H31–H34。
 - 路线图阶段 0–4、6、7 与回移 B0–B5 完成；阶段 5 只差用户 H6；U0–U4 完成，**U5 / U6 的其余部分**（光标捕获、着色器做颜色转换、高对比度、性能回归门槛、`Ctrl+K`、设备在线状态、"停止共享"）未做。
