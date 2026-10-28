@@ -74,13 +74,26 @@ func (p plainSink) InjectText(text string) error {
 }
 
 type Options struct {
-	FPS        int           // capture rate; default 10
+	FPS int // capture rate; default DefaultFPS
+	// FPSFn, if set, is asked for the capture rate before every frame, so the rate
+	// can follow what the viewer is doing (see Boost). A value of zero or less keeps
+	// the current rate; one above MaxFPS is lowered to it. A change is noticed at
+	// the next tick, so from a slow rate it can take up to one slow interval.
+	FPSFn      func() int
 	AckTimeout time.Duration // base time to wait for a frame's ack; default 1s (see frameTimeout)
 	// Check decides whether the viewer (certificate fingerprint, address, offered
 	// password) may connect.
-	Check           func(fingerprint, addr, password string) (trust.Verdict, error)
-	OnAuthed        func()           // called once the viewer is accepted
-	OnError         func(error)      // non-fatal session problems
+	Check    func(fingerprint, addr, password string) (trust.Verdict, error)
+	OnAuthed func()      // called once the viewer is accepted
+	OnError  func(error) // non-fatal session problems
+	// OnInput is called for every input or text message an admitted viewer sends
+	// (including repeats of one already run), not for acknowledgements. It runs on
+	// the goroutine that reads the viewer and must not block.
+	OnInput func()
+	// OnFrame is called after each screen update has been written to the wire, with
+	// its sequence number and size in bytes. It runs on the goroutine that serves the
+	// session and must not block.
+	OnFrame         func(seq uint32, bytes int)
 	InputController *InputController // shared controller for releasing inputs across sessions
 	Gate            *Gate            // optional cap on connections awaiting authentication
 	Sessions        *Sessions        // optional: lets the host end sessions that were let in without verification
@@ -151,8 +164,9 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 		}
 	}()
 	if opt.FPS <= 0 {
-		opt.FPS = 10
+		opt.FPS = DefaultFPS
 	}
+	opt.FPS = min(opt.FPS, MaxFPS)
 	if opt.AckTimeout <= 0 {
 		opt.AckTimeout = time.Second
 	}
@@ -273,7 +287,7 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 
 	var lastAck atomic.Uint32
 	readErr := make(chan error, 1)
-	go func() { readErr <- readControl(ctrl, cd, input, dd, &lastAck) }()
+	go func() { readErr <- readControl(ctrl, cd, input, dd, &lastAck, opt.OnInput) }()
 
 	cur := tile.NewFrame(w, h)
 	var diff tile.Differ
@@ -305,7 +319,8 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 	}
 
 	var lastRefresh, grabFailedSince time.Time
-	tick := time.NewTicker(time.Second / time.Duration(opt.FPS))
+	fps := opt.FPS
+	tick := time.NewTicker(time.Second / time.Duration(fps))
 	defer tick.Stop()
 	for {
 		select {
@@ -316,6 +331,12 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-tick.C:
+		}
+		if opt.FPSFn != nil {
+			if next := min(opt.FPSFn(), MaxFPS); next > 0 && next != fps {
+				fps = next
+				tick.Reset(time.Second / time.Duration(fps))
+			}
 		}
 		if inputSession != nil {
 			if released, err := inputSession.ReleaseIfIdle(opt.HeldInputIdle); released && opt.OnError != nil {
@@ -401,16 +422,22 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 			continue
 		}
 		st.Close()
+		if opt.OnFrame != nil {
+			opt.OnFrame(seq, len(data))
+		}
 		fl = &flight{seq: seq, idxs: idxs, st: st, sentAt: time.Now(), timeout: timeout}
 		clear(pending)
 	}
 }
 
-func readControl(ctrl *quic.Stream, cd codec, input inputSink, dd *proto.Dedup, lastAck *atomic.Uint32) error {
+func readControl(ctrl *quic.Stream, cd codec, input inputSink, dd *proto.Dedup, lastAck *atomic.Uint32, onInput func()) error {
 	for {
 		m, err := cd.readClientMsg(ctrl)
 		if err != nil {
 			return err
+		}
+		if onInput != nil && (m.Type == proto.MsgInput || m.Type == proto.MsgText) {
+			onInput()
 		}
 		switch m.Type {
 		case proto.MsgAck:

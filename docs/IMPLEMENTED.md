@@ -43,6 +43,8 @@
 | 单控制者 | 已实现 | 同时只有一个控制者，新连接顶替旧连接，旧会话持有的按键/鼠标键被释放 | `internal/remote/input.go`、`cmd/go-nx/host_windows.go` |
 | 输入的收尾 | 已实现（2026-10-28） | 查看器断开 / 被顶替时，主机按固定顺序释放它按住的东西：先鼠标键、再按键，各自"后按的先放"（Ctrl+Shift+点击会被释放成：点击、Shift、Ctrl）；清理性的鼠标抬起带 `NoMove`，**不再把指针拖回当初按下的位置**；被桌面拒绝的释放保留（最多 64 个），下次使用时重试；会话静默超过 20 s（`HeldInputIdle`）仍持有按键 / 按钮就自动释放，不必等 45 s 的 QUIC 空闲超时；查看器按住按钮而指针不动时每 5 s 发一个保活移动。**Win+L 默认被主机拒绝**（回 Failed 回执；设置 `allow_win_l` = `1` 放行），其他 Win 组合不受影响 | `internal/remote/input.go`、`host.go`、`cmd/go-nx/host_windows.go` |
 | 查看器的输入 | 已改进（2026-10-28） | 同一帧里的多个按键事件按键盘顺序发送（普通键的抬起、修饰键按下、普通键按下、修饰键抬起），不再随 map 遍历顺序；释放同理，修饰键最后；按住按钮把指针拖出窗口时继续把位置夹到画面边缘并发送，所以松开不会跳；鼠标键按固定顺序；退出 / 更新重启时先关闭所有会话（任何 goroutine 调用都安全），主机立即释放；键表补上 F13–F24、Print Screen、ISO 键盘的额外键 | `internal/view`、`cmd/go-nx/viewer_windows.go`、`keys_windows.go`、`tray_windows.go` |
+| 按指纹固定的连接 | 已实现（2026-10-28） | `DialOptions.ExpectFingerprint`：只接受证书指纹恰好是它的主机（二维码 / 配对码携带指纹的场景）；握手阶段就拒绝别的证书（`ErrHostChanged`），**密码在握手之后才发，所以不会送给错的主机**；不读不写主机库（可为 nil）；写法宽松，格式不对在拨号前就报错 | `internal/remote/tls.go`（`pinnedClientTLS`、`normalizeFingerprint`）、`client.go` |
+| 随输入调整帧率与回调 | 已实现机制（2026-10-28）；**主程序尚未接入** | `Options.FPSFn`（每个 tick 询问速率，≤0 保持、>`MaxFPS`=120 夹住）、`OnInput`（每条输入 / 文本消息，含重试，不含确认）、`OnFrame(seq, bytes)`；`Boost{Base, Active, Hold}` 把两者接起来：最近一次输入后 `Hold`（默认 2 s）内用 `Active`，否则 `Base`。是否在主机默认启用等阶段 6 的 CPU / 带宽数据出来再定 | `internal/remote/host.go`、`boost.go` |
 | 查看器发送队列 | 已实现（2026-10-28；此前在界面线程里同步写） | `Client.SendInput` / `SendText` 只入队（上限 1024 条，满了返回 `ErrBacklog`，绝不阻塞调用方）；连续的纯移动会被合并为最后一个，按下 / 抬起 / 滚轮 / 按键保序不丢；专门的 goroutine 写控制流，每次写有 10 s 截止时间，超时即关闭连接（`Run` 随之返回），不会永远卡着。确认回执也走同一条写路径 | `internal/remote/outbox.go`、`client.go` |
 | 断线后重连 | 部分 | 首次拨号最多尝试 4 次（握手时限 2/3/4/6 s）；断线后需手动重连 | `cmd/go-nx/tabs_windows.go:88` |
 

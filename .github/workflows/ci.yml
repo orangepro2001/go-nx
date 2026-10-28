@@ -87,6 +87,11 @@ jobs:
       - name: unit tests
         run: go test -count=1 ./...
 
+      # What self-update relies on: a running exe can be renamed but not deleted.
+      # -v so that the log shows the evidence (docs/ACCEPTANCE.md, section 2).
+      - name: self-update on a running exe
+        run: go test -count=1 -v -run 'TestReplaceOfARunningExe|TestARunningBackupCopyTakesTheRealNameBack' ./internal/update
+
       # The hosted runner has an interactive 1024x768 desktop that GDI can capture and
       # SendInput can drive (docs/ACCEPTANCE.md, section 1b), so this blocks.
       - name: real desktop smoke (capture, inject)

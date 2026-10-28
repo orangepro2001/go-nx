@@ -8,6 +8,7 @@ package remote
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/quic-go/quic-go"
 
@@ -102,6 +104,50 @@ func clientTLSVersions(id tls.Certificate, host string, hosts *trust.Store, maxV
 		NextProtos: protos(maxVersion),
 		MinVersion: tls.VersionTLS13,
 	}, pin
+}
+
+// pinnedClientTLS requires the host's certificate to be exactly the one with the
+// fingerprint expected (already in normalised form). It never reads or records a
+// pin: the fingerprint comes with the pairing code, so a host that merely sits at
+// the same address is refused during the handshake, before any password is sent.
+func pinnedClientTLS(id tls.Certificate, expected string, maxVersion int) *tls.Config {
+	return &tls.Config{
+		Certificates:       []tls.Certificate{id},
+		InsecureSkipVerify: true, // replaced by the exact fingerprint comparison below
+		VerifyPeerCertificate: func(raw [][]byte, _ [][]*x509.Certificate) error {
+			if len(raw) == 0 {
+				return errors.New("host sent no certificate")
+			}
+			if trust.Fingerprint(raw[0]) != expected {
+				return ErrHostChanged
+			}
+			return nil
+		},
+		NextProtos: protos(maxVersion),
+		MinVersion: tls.VersionTLS13,
+	}
+}
+
+// normalizeFingerprint reads a fingerprint as people and QR codes write it: any
+// case, with or without colons or spaces between bytes. It reports false for
+// anything that is not 32 bytes of hex.
+func normalizeFingerprint(s string) (string, bool) {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == ':' || unicode.IsSpace(r):
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'F':
+			b.WriteRune(r + 'a' - 'A')
+		default:
+			return "", false
+		}
+	}
+	if b.Len() != 2*sha256.Size {
+		return "", false
+	}
+	return b.String(), true
 }
 
 // pinRecorder holds the fingerprint seen for a not-yet-pinned host so it can be

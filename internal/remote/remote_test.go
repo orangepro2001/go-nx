@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,8 +41,9 @@ func hostsStore(t *testing.T) *trust.Store {
 func fp(id tls.Certificate) string { return trust.Fingerprint(id.Certificate[0]) }
 
 type fakeSource struct {
-	mu sync.Mutex
-	f  *tile.Frame
+	mu    sync.Mutex
+	f     *tile.Frame
+	grabs atomic.Int64 // how many times the host has looked at the screen
 }
 
 func newFakeSource(w, h int) *fakeSource { return &fakeSource{f: tile.NewFrame(w, h)} }
@@ -49,6 +51,7 @@ func newFakeSource(w, h int) *fakeSource { return &fakeSource{f: tile.NewFrame(w
 func (s *fakeSource) Size() (int, int) { return s.f.W, s.f.H }
 
 func (s *fakeSource) Grab(dst *tile.Frame) error {
+	s.grabs.Add(1)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	copy(dst.Pix, s.f.Pix)

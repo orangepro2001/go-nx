@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -67,6 +68,12 @@ type DialOptions struct {
 	// viewer that has no pointer of its own on screen (a phone). A viewer that does
 	// show its own pointer should leave it off, or it shows two.
 	WantCursor bool
+	// ExpectFingerprint, if set, connects only to a host whose certificate has this
+	// SHA-256 fingerprint (hex, any case, colons and spaces allowed): the case of a
+	// pairing code that carries it. The host store is then neither read nor written,
+	// may be nil, and a host with another certificate is refused during the handshake
+	// with ErrHostChanged, before the password is sent.
+	ExpectFingerprint string
 }
 
 // Dial connects to a host, presenting id and pinning the host's fingerprint in
@@ -82,7 +89,20 @@ func DialWith(ctx context.Context, addr string, id tls.Certificate, hosts *trust
 	if o.ForceV0 {
 		maxV = 0
 	}
-	cfg, pin := clientTLSVersions(id, hostOf(addr), hosts, maxV)
+	var cfg *tls.Config
+	var pin *pinRecorder // nil when the fingerprint was given and nothing is to be remembered
+	if o.ExpectFingerprint != "" {
+		want, ok := normalizeFingerprint(o.ExpectFingerprint)
+		if !ok {
+			return nil, fmt.Errorf("remote: %q is not a certificate fingerprint (want 64 hex digits)", o.ExpectFingerprint)
+		}
+		cfg = pinnedClientTLS(id, want, maxV)
+	} else {
+		if hosts == nil {
+			return nil, errors.New("remote: no host store and no expected fingerprint to check the host against")
+		}
+		cfg, pin = clientTLSVersions(id, hostOf(addr), hosts, maxV)
+	}
 	conn, err := quic.DialAddr(ctx, addr, cfg, quicConfig())
 	if err != nil {
 		return nil, err
@@ -95,8 +115,10 @@ func DialWith(ctx context.Context, addr string, id tls.Certificate, hosts *trust
 	// Persist a first-seen host fingerprint now that the handshake is done, so
 	// disk I/O never sits on the connection's critical path. A failed write only
 	// means the next connection re-pins, so it must not fail this one.
-	if err := pin.commit(hosts); err != nil {
-		log.Printf("pin host %s: %v", hostOf(addr), err)
+	if pin != nil {
+		if err := pin.commit(hosts); err != nil {
+			log.Printf("pin host %s: %v", hostOf(addr), err)
+		}
 	}
 	ctrl, err := conn.OpenStreamSync(ctx)
 	if err != nil {
