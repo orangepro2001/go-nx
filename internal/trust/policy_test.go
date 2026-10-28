@@ -100,3 +100,34 @@ func TestOpenByDefaultUntilAuthRequired(t *testing.T) {
 	p.SetRequireAuth(false)
 	check(t, p, "anyone", "", Allowed)
 }
+
+func TestRevokeTurnsAPairedDeviceBackIntoAStranger(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.SetRequireAuth(true)
+	p.StartPairing(time.Minute)
+	check(t, p, "aa", "", Allowed) // pairs aa
+	check(t, p, "aa", "", Allowed) // and it stays paired
+	if err := p.Revoke("aa"); err != nil {
+		t.Fatal(err)
+	}
+	check(t, p, "aa", "", Untrusted)
+	if p.TrustedCount() != 0 {
+		t.Fatalf("TrustedCount = %d after revoke", p.TrustedCount())
+	}
+}
+
+func TestRevokeAllForgetsEveryDevice(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.SetRequireAuth(true)
+	for _, fp := range []string{"aa", "bb", "cc"} {
+		p.StartPairing(time.Minute)
+		check(t, p, fp, "", Allowed)
+	}
+	n, err := p.RevokeAll()
+	if err != nil || n != 3 {
+		t.Fatalf("RevokeAll = %d, %v; want 3, nil", n, err)
+	}
+	for _, fp := range []string{"aa", "bb", "cc"} {
+		check(t, p, fp, "", Untrusted)
+	}
+}

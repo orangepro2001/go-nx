@@ -70,6 +70,13 @@ func (p *Policy) PairingLeft() time.Duration {
 
 func (p *Policy) TrustedCount() int { return p.trusted.Len() }
 
+// Revoke forgets the paired device with certificate fingerprint fp. It is a
+// stranger again: it must pair or offer the password like any new device.
+func (p *Policy) Revoke(fp string) error { return p.trusted.Delete(fp) }
+
+// RevokeAll forgets every paired device and returns how many there were.
+func (p *Policy) RevokeAll() (int, error) { return p.trusted.Clear() }
+
 // Check decides about a viewer with certificate fingerprint fp from addr, which
 // offered password (possibly empty).
 func (p *Policy) Check(fp, addr, password string) (Verdict, error) {

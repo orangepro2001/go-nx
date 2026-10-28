@@ -94,3 +94,36 @@ func TestStoreSetLeavesNoTemporaryFiles(t *testing.T) {
 		t.Errorf("directory has %d entries, want just the store file", len(es))
 	}
 }
+
+func TestStoreDeleteAndClearPersist(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.json")
+	s, _ := OpenStore(p)
+	for _, k := range []string{"b", "a", "c"} {
+		if err := s.Set(k, "v"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := strings.Join(s.Keys(), ","); got != "a,b,c" {
+		t.Fatalf("Keys = %s, want sorted a,b,c", got)
+	}
+	if err := s.Delete("b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete("missing"); err != nil {
+		t.Fatalf("deleting a missing key: %v", err)
+	}
+	re, _ := OpenStore(p)
+	if _, ok := re.Get("b"); ok || re.Len() != 2 {
+		t.Fatalf("after Delete reopen has len %d, b present = %v", re.Len(), ok)
+	}
+	n, err := s.Clear()
+	if err != nil || n != 2 {
+		t.Fatalf("Clear = %d, %v; want 2, nil", n, err)
+	}
+	if re, _ = OpenStore(p); re.Len() != 0 {
+		t.Fatalf("after Clear reopen has %d entries", re.Len())
+	}
+	if n, err := s.Clear(); err != nil || n != 0 {
+		t.Fatalf("Clear on empty = %d, %v", n, err)
+	}
+}

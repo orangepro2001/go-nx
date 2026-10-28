@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"flag"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -28,6 +29,7 @@ import (
 
 	"go-nx/internal/logging"
 	"go-nx/internal/profiles"
+	"go-nx/internal/remote"
 	"go-nx/internal/trust"
 	"go-nx/internal/ui"
 	"go-nx/internal/update"
@@ -60,11 +62,12 @@ type app struct {
 	tabs   []*tab
 	active int // 0 is the home tab, i is tabs[i-1]
 
-	fields   [ui.NumFields]ui.Field
-	focus    int
-	scroll   int    // first visible saved connection
-	delArmed int    // saved connection waiting for a second click to delete, or -1
-	message  string // last note or error, shown on the home tab
+	fields      [ui.NumFields]ui.Field
+	focus       int
+	scroll      int    // first visible saved connection
+	delArmed    int    // saved connection waiting for a second click to delete, or -1
+	forgetArmed bool   // "forget paired devices" waiting for a second click
+	message     string // last note or error, shown on the home tab
 
 	renaming     int // tab-bar index being renamed, 0 for none
 	renameBuf    string
@@ -410,6 +413,16 @@ func (a *app) updateTab(t *tab) {
 		}
 		t.sess.update(a.viewport(), true)
 	case ui.TabError:
+		if t.hostChanged && ebiten.IsKeyPressed(ebiten.KeyControl) && inpututil.IsKeyJustPressed(ebiten.KeyF) {
+			if err := remote.ForgetHost(a.hosts, t.addr); err != nil {
+				t.err = "Could not forget the saved identity: " + err.Error()
+			} else {
+				t.hostChanged = false
+				t.err = "Forgot the saved identity of this host. Press Enter to connect and pin the identity it presents now."
+				log.Printf("forgot saved identity of %s", t.addr)
+			}
+			return
+		}
 		if inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeyNumpadEnter) {
 			a.startDial(t)
 		}
@@ -422,6 +435,8 @@ func (a *app) updateHome() {
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) && hy >= 0 {
 		armed := a.delArmed
 		a.delArmed = -1
+		forgetArmed := a.forgetArmed
+		a.forgetArmed = false
 		hit := ui.HomeHit(cx, hy, len(a.profiles.Items), a.scroll)
 		switch hit.Kind {
 		case ui.HitCheckbox:
@@ -430,6 +445,20 @@ func (a *app) updateHome() {
 			a.host.startPairing()
 		case ui.HitQuit:
 			quitApp()
+		case ui.HitForget:
+			switch {
+			case a.host.trustedCount() == 0:
+				a.message = "No paired devices to forget"
+			case !forgetArmed:
+				a.forgetArmed = true
+			default:
+				n, err := a.host.forgetAll()
+				if err != nil {
+					a.message = "Forgot the paired devices in memory but could not save: " + err.Error()
+				} else {
+					a.message = fmt.Sprintf("Forgot %d paired device(s)", n)
+				}
+			}
 		case ui.HitField:
 			a.focus = hit.Index
 		case ui.HitConnect:
@@ -516,7 +545,7 @@ func (a *app) saveForm() {
 func (a *app) homeData() *ui.HomeData {
 	return &ui.HomeData{
 		Host: a.host.info(), Fields: a.fields, Focus: a.focus, Profiles: a.profiles.Items,
-		Scroll: a.scroll, DelArmed: a.delArmed, Message: a.message,
+		Scroll: a.scroll, DelArmed: a.delArmed, ForgetArmed: a.forgetArmed, Message: a.message,
 		Caret: time.Now().UnixMilli()/500%2 == 0,
 	}
 }

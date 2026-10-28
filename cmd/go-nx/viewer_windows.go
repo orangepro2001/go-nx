@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"image"
 	"log"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -284,6 +283,11 @@ func fitWindow(fw, fh int) {
 	ebiten.SetWindowSize(int(float64(fw)/k*scale), int(float64(fh)/k*scale))
 }
 
+// hostChangedMsg explains a changed host certificate and the one deliberate way out.
+const hostChangedMsg = "The host's identity changed (new install, or another PC at this address). " +
+	"If you expect that, press Ctrl+F to forget the saved identity of this host, then Enter to connect and pin the new one. " +
+	"If you do not expect it, do not connect."
+
 // describe turns a connection error into something the user can act on.
 func describe(err error) string {
 	var ae *quic.ApplicationError
@@ -297,10 +301,12 @@ func describe(err error) string {
 			return "Too many wrong passwords; try again in a minute"
 		case remote.CloseReplaced:
 			return "Another client took over this host"
+		case remote.CloseRevoked:
+			return "This PC was removed from the host's paired devices. Pair it again, or enter the host's password"
 		}
 	}
 	if strings.Contains(err.Error(), remote.ErrHostChanged.Error()) {
-		return "The host's identity changed (new install, or another PC at this address). If expected, remove its entry from " + filepath.Join(configDir(), "hosts.json")
+		return hostChangedMsg
 	}
 	var idle *quic.IdleTimeoutError
 	if errors.As(err, &idle) {

@@ -27,6 +27,7 @@ const (
 	CloseBadPassword = 2 // the password offered was wrong
 	CloseReplaced    = 3 // another viewer took over
 	CloseLocked      = 4 // too many wrong passwords; try again later
+	CloseRevoked     = 5 // this device was removed from the host's paired devices
 )
 
 // ErrHostChanged means a host's certificate differs from the one remembered for its address.
@@ -119,6 +120,11 @@ func (p *pinRecorder) commit(hosts *trust.Store) error {
 func Listen(addr string, id tls.Certificate) (*quic.Listener, error) {
 	return quic.ListenAddr(addr, serverTLS(id), quicConfig())
 }
+
+// ForgetHost drops the fingerprint remembered for the host at addr, so the next
+// connection to it pins whatever certificate it presents. Use it only after the
+// user has been told why the identity changed and chose to trust the new one.
+func ForgetHost(hosts *trust.Store, addr string) error { return hosts.Delete(hostOf(addr)) }
 
 func hostOf(addr string) string {
 	if h, _, err := net.SplitHostPort(addr); err == nil {

@@ -36,6 +36,7 @@ type hostState struct {
 	Rejected   string // last device turned away, with the reason
 	policy     *trust.Policy
 	settings   *trust.Store
+	kick       func(code quic.ApplicationErrorCode, reason string) // closes the current controller; set by acceptLoop
 }
 
 func (h *hostState) fail(err error) {
@@ -51,6 +52,18 @@ func (h *hostState) startPairing() {
 	h.Rejected = ""
 	h.mu.Unlock()
 	log.Print("pairing opened")
+}
+
+// forgetAll removes every paired device and drops the controller that is
+// connected now, so a revoked device does not keep a session it already has. It
+// returns how many devices were forgotten.
+func (h *hostState) forgetAll() (int, error) {
+	n, err := h.policy.RevokeAll()
+	if h.kick != nil {
+		h.kick(remote.CloseRevoked, "removed from the paired devices")
+	}
+	log.Printf("forgot %d paired device(s)", n)
+	return n, err
 }
 
 // info is a snapshot for the home tab.
@@ -167,6 +180,15 @@ func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *injec
 		dd              = proto.NewDedup()
 		inputController = remote.NewInputController(inj)
 	)
+	h.mu.Lock()
+	h.kick = func(code quic.ApplicationErrorCode, reason string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if active != nil {
+			active.CloseWithError(code, reason)
+		}
+	}
+	h.mu.Unlock()
 	for {
 		conn, err := ln.Accept(context.Background())
 		if err != nil {

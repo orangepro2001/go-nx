@@ -14,9 +14,11 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"maps"
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -131,6 +133,40 @@ func (s *Store) Set(key, val string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.m[key] = val
+	return s.saveLocked()
+}
+
+// Delete removes key and writes the file. A key that is not there is not an error.
+func (s *Store) Delete(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.m[key]; !ok {
+		return nil
+	}
+	delete(s.m, key)
+	return s.saveLocked()
+}
+
+// Clear removes every entry, writes the file, and returns how many there were.
+func (s *Store) Clear() (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := len(s.m)
+	if n == 0 {
+		return 0, nil
+	}
+	clear(s.m)
+	return n, s.saveLocked()
+}
+
+// Keys returns the stored keys in sorted order.
+func (s *Store) Keys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Sorted(maps.Keys(s.m))
+}
+
+func (s *Store) saveLocked() error {
 	b, err := json.MarshalIndent(s.m, "", "  ")
 	if err != nil {
 		return err

@@ -53,6 +53,9 @@
 | H10 | 退出控制端后被控端的按键状态 | 按住 Shift 时强退控制端 | 被控端 Shift 是否保持按下、多久恢复 | 待验证（推测最多 45 s） |
 | H11 | 长时间稳定性 | 连接 ≥ 2 h | 内存、CPU、有无断线 | 待验证 |
 | H12 | 真实网络（Wi-Fi、不同子网/tailnet） | 跨网段连接 | 首帧时间、帧率、码率 | 待验证 |
+| H13 | 主页 "Forget paired devices" | 配对一台设备后点两次；确认第二次点击前文案是 `Sure? Forget N device(s)`；点别处应取消 | 配对数归零；正在控制的设备是否被断开并看到"removed from the host's paired devices" | 待验证（仅编译 / vet，UI 未在 Windows 上跑过） |
+| H14 | 主机证书变化后的 `Ctrl+F` | 重装主机或换机同 IP，用控制端连接 | 先看到 `host identity changed`；`Ctrl+F` 后提示可重连；`Enter` 后连上并重新固定 | 待验证（同上） |
+| H15 | 启动时 JSON 损坏提示 | 退出 go-nx，把 `%AppData%\go-nx\connections.json` 改成无效内容再启动 | 弹窗列出被改名的文件；原文件在 `*.corrupt-*`；能正常启动 | 待验证（同上；逻辑已有单元测试） |
 
 ## 4. 已知缺陷与风险
 

@@ -52,7 +52,8 @@
 | 配对 | 部分 | 主机上点按钮开 2 分钟窗口，**下一台**连入设备被信任。**没有** 6 位码、没有指纹核对、没有本机确认弹窗 | `policy.go:86-90`、`host_windows.go:25` |
 | 密码 | 部分 | 可选；错 5 次**全局**锁 1 分钟，计数不衰减，不按来源 | `policy.go:20-21,96-106` |
 | 首次连接 | 风险 | 密码在校验主机指纹之前就发出（TOFU 首次） | `internal/remote/client.go:45` |
-| 撤销已信任设备 | **未实现** | `Store` 只有 Get/Len/Set；界面没有取消配对；只能手改 `trusted.json` 并重启 | `internal/trust/trust.go` |
+| 撤销已信任设备 | 部分（2026-10-28） | `Store.Delete/Clear/Keys`、`Policy.Revoke/RevokeAll`；主页新增两次点击确认的 "Forget paired devices"，会清空配对并以 `CloseRevoked`(5) 断开当前控制者。**还没有逐设备列表**（只能全部忘记） | `internal/trust`、`internal/ui/home.go`、`cmd/go-nx/host_windows.go` |
+| 忘记主机身份（控制端） | 已实现（2026-10-28） | 主机证书变化时仍硬失败（`ErrHostChanged`）；用户确认后在该标签页按 `Ctrl+F` 忘记旧指纹，再 `Enter` 连接并重新固定。此前提示的"手改 hosts.json"在程序运行时无效 | `remote.ForgetHost`、`cmd/go-nx/main_windows.go`、`viewer_windows.go` |
 | 凭据存储 | **明文** | 主机密码在 `settings.json`；连接密码在 `connections.json`；`identity.pem` 私钥未加密；Windows 上 0600 无效 | `host_windows.go:88-95`、`internal/profiles/profiles.go:12-17` |
 | 配置文件写入 | 已实现（2026-10-28） | `trusted/settings/hosts/connections.json` 与 `identity.pem` 经临时文件 + fsync + rename 原子替换；启动时读不懂的 JSON 被改名为 `<名>.corrupt-<时间>` 并以空状态继续，弹窗告知，而不是 `log.Fatal`。`identity.pem` 本身损坏仍是明确报错（自动重建会改变指纹、使所有配对失效）；读取失败（权限 / I/O）也仍报错 | `internal/fsutil`、`trust.OpenStoreRecovering`、`profiles.LoadRecovering`、`cmd/go-nx/main_windows.go` |
 | 监听范围 | 全接口 | `":%d"`，默认 UDP 7000，无绑定选项 | `host_windows.go:151`、`main_windows.go:98` |

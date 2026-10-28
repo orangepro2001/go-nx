@@ -449,3 +449,28 @@ func TestLargeFirstFrameIsNotCancelledForever(t *testing.T) {
 		t.Fatal("the full first frame never arrived: it is cancelled and resent before it can finish")
 	}
 }
+
+// After the user decides to trust a host's new identity, ForgetHost lets the
+// next connection pin it; nothing else changes the pin.
+func TestForgetHostLetsAChangedHostBePinnedAgain(t *testing.T) {
+	viewerID, hostA, hostB := identity(t), identity(t), identity(t)
+	hosts := hostsStore(t)
+	if r := startWith(t, Options{}, hostA, viewerID, hosts, true, 0); r.dialErr != nil {
+		t.Fatal(r.dialErr)
+	}
+	if r := startWith(t, Options{}, hostB, viewerID, hosts, true, 0); r.dialErr == nil {
+		t.Fatal("changed host was accepted before ForgetHost")
+	}
+	if err := ForgetHost(hosts, "127.0.0.1:7000"); err != nil { // the port is not part of the pin
+		t.Fatal(err)
+	}
+	if _, ok := hosts.Get("127.0.0.1"); ok {
+		t.Fatal("pin still present after ForgetHost")
+	}
+	if r := startWith(t, Options{}, hostB, viewerID, hosts, true, 0); r.dialErr != nil {
+		t.Fatalf("dial after ForgetHost: %v", r.dialErr)
+	}
+	if got, _ := hosts.Get("127.0.0.1"); got != fp(hostB) {
+		t.Fatalf("pinned %q, want host B's fingerprint", got)
+	}
+}

@@ -16,14 +16,15 @@ import (
 // tab is one remote session. It is created as soon as a connection is started,
 // so several can be connecting or live at once.
 type tab struct {
-	title    string
-	addr     string // normalized host:port
-	password string
-	profile  string // name of the saved connection this tab came from, or ""
-	state    ui.TabState
-	err      string // why the tab is in the error state
-	sess     *session
-	dial     chan connResult
+	title       string
+	addr        string // normalized host:port
+	password    string
+	profile     string // name of the saved connection this tab came from, or ""
+	state       ui.TabState
+	err         string // why the tab is in the error state
+	hostChanged bool   // the error is a changed host certificate, which Ctrl+F can clear
+	sess        *session
+	dial        chan connResult
 }
 
 type connResult struct {
@@ -88,7 +89,7 @@ func (a *app) openTab(title, addr, password, profile string) {
 var dialWaits = []time.Duration{2 * time.Second, 3 * time.Second, 4 * time.Second, 6 * time.Second}
 
 func (a *app) startDial(t *tab) {
-	t.state, t.err = ui.TabConnecting, ""
+	t.state, t.err, t.hostChanged = ui.TabConnecting, "", false
 	t.dial = make(chan connResult, 1)
 	go func(addr, password string, out chan<- connResult) {
 		var cl *remote.Client
@@ -116,6 +117,7 @@ func (a *app) pollTabs() {
 			case r := <-t.dial:
 				if r.err != nil {
 					t.state, t.err = ui.TabError, describe(r.err)
+					t.hostChanged = strings.Contains(r.err.Error(), remote.ErrHostChanged.Error())
 					continue
 				}
 				t.sess = newSession(r.cl, &a.nextOp)

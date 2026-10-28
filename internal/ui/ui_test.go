@@ -56,6 +56,7 @@ func TestHomeHit(t *testing.T) {
 		{"checkbox", 40, chkY + 5, Hit{Kind: HitCheckbox}},
 		{"pair", 100, actionY + 5, Hit{Kind: HitPair}},
 		{"quit", quitX + 10, actionY + 5, Hit{Kind: HitQuit}},
+		{"forget devices", leftX + 10, forgetY + 5, Hit{Kind: HitForget}},
 		{"connect", 60, connY + 5, Hit{Kind: HitConnect}},
 		{"save", saveX + 60, connY + 5, Hit{Kind: HitSave}},
 		{"host password", fieldX + 5, fieldY[FHostPw] + 5, Hit{HitField, FHostPw}},
@@ -83,7 +84,7 @@ func TestLayoutHasNoOverlaps(t *testing.T) {
 		rects = append(rects, FieldRect(i))
 	}
 	rects = append(rects, Rect{leftX, chkY, 640, fieldH}, Rect{leftX, actionY, btnW, btnH},
-		Rect{quitX, actionY, quitW, btnH}, Rect{leftX, connY, smallBtn, btnH}, Rect{saveX, connY, smallBtn, btnH})
+		Rect{quitX, actionY, quitW, btnH}, Rect{leftX, forgetY, btnW, forgetH}, Rect{leftX, connY, smallBtn, btnH}, Rect{saveX, connY, smallBtn, btnH})
 	for i, a := range rects {
 		for j, b := range rects[i+1:] {
 			if a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H {

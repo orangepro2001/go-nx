@@ -28,6 +28,8 @@ const (
 	quitX    = 310
 	quitW    = 300
 	actionY  = 262
+	forgetY  = 304
+	forgetH  = 30
 	connY    = 520
 	saveX    = 210
 	smallBtn = 160
@@ -77,7 +79,8 @@ const (
 	HitCheckbox
 	HitPair
 	HitQuit
-	HitField // Index: field
+	HitForget // forget every paired device
+	HitField  // Index: field
 	HitConnect
 	HitSave
 	HitProfile // Index: profile index (scroll already applied)
@@ -102,6 +105,8 @@ func HomeHit(x, y, nProfiles, scroll int) Hit {
 		return Hit{Kind: HitPair}
 	case Rect{quitX, actionY, quitW, btnH}.Contains(x, y):
 		return Hit{Kind: HitQuit}
+	case Rect{leftX, forgetY, btnW, forgetH}.Contains(x, y):
+		return Hit{Kind: HitForget}
 	case Rect{leftX, connY, smallBtn, btnH}.Contains(x, y):
 		return Hit{Kind: HitConnect}
 	case Rect{saveX, connY, smallBtn, btnH}.Contains(x, y):
@@ -145,14 +150,15 @@ type Field struct {
 
 // HomeData is everything DrawHome needs.
 type HomeData struct {
-	Host     HostInfo
-	Fields   [NumFields]Field
-	Focus    int
-	Profiles []profiles.Profile
-	Scroll   int
-	DelArmed int // profile index awaiting a second click to delete, or -1
-	Message  string
-	Caret    bool
+	Host        HostInfo
+	Fields      [NumFields]Field
+	Focus       int
+	Profiles    []profiles.Profile
+	Scroll      int
+	DelArmed    int  // profile index awaiting a second click to delete, or -1
+	ForgetArmed bool // "forget paired devices" awaiting a second click
+	Message     string
+	Caret       bool
 }
 
 // DrawHome draws the home tab with its top edge at y = oy.
@@ -202,6 +208,13 @@ func DrawHome(dst *ebiten.Image, face *text.GoTextFace, d *HomeData, oy int) {
 	t("Pair new device (2 min)", leftX+14, actionY+4, ColText)
 	Fill(dst, quitX, oy+actionY, quitW, btnH, ColDanger)
 	t("Quit go-nx (stop sharing)", quitX+14, actionY+4, ColText)
+	if d.ForgetArmed {
+		Fill(dst, leftX, oy+forgetY, btnW, forgetH, ColDanger)
+		t(Truncate(face, fmt.Sprintf("Sure? Forget %d device(s)", h.Paired), btnW-20), leftX+10, forgetY+1, ColText)
+	} else {
+		Fill(dst, leftX, oy+forgetY, btnW, forgetH, ColBox)
+		t("Forget paired devices", leftX+10, forgetY+1, ColDim)
+	}
 
 	t("Control another PC", leftX, 340, ColText)
 	for i := FName; i < NumFields; i++ {
