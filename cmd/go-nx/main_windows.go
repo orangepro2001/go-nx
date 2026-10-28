@@ -99,6 +99,7 @@ func configDir() string {
 func main() {
 	connect := flag.String("connect", "", "prefill the address to connect to")
 	port := flag.Int("port", 7000, "UDP port to host on")
+	listen := flag.String("listen", "", "restrict hosting to one local IP (optionally IP:port), e.g. 192.168.1.5; default is every interface")
 	fps := flag.Int("fps", 10, "capture frames per second when hosting")
 	hidden := flag.Bool("hidden", false, "start in the tray without showing the window")
 	updateURL := flag.String("update-url", update.BaseURL, "release server to look for updates on")
@@ -177,7 +178,7 @@ func main() {
 	mark("identity, settings and saved connections loaded")
 
 	a := &app{
-		host:     startHost(*port, *fps, id, trusted, settings),
+		host:     startHost(*listen, *port, *fps, id, trusted, settings),
 		id:       id,
 		hosts:    hosts,
 		profiles: saved,

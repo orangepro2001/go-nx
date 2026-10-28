@@ -11,7 +11,11 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
+	"net/netip"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -180,3 +184,33 @@ func hostOf(addr string) string {
 
 // sourceHost is the part of a remote address that identifies a PC: its IP.
 func sourceHost(addr string) string { return hostOf(addr) }
+
+// ParseListen turns the -listen and -port options into the UDP address to bind,
+// the port to show, and the IP the host is restricted to ("" for every
+// interface). listen may be empty (all interfaces on port), an IP (that interface
+// on port), an IP with a port, or just ":port". Names are refused: which address
+// a name resolves to is not something to decide at start-up.
+func ParseListen(listen string, port int) (bind string, outPort int, ip string, err error) {
+	if listen == "" {
+		if port < 1 || port > 65535 {
+			return "", 0, "", fmt.Errorf("port %d is out of range", port)
+		}
+		return fmt.Sprintf(":%d", port), port, "", nil
+	}
+	host, portStr, splitErr := net.SplitHostPort(listen)
+	if splitErr != nil {
+		host, portStr = strings.Trim(listen, "[]"), strconv.Itoa(port) // no port given: an address alone
+	}
+	p, convErr := strconv.Atoi(portStr)
+	if convErr != nil || p < 1 || p > 65535 {
+		return "", 0, "", fmt.Errorf("listen address %q has a bad port", listen)
+	}
+	if host == "" {
+		return fmt.Sprintf(":%d", p), p, "", nil
+	}
+	addr, parseErr := netip.ParseAddr(host)
+	if parseErr != nil {
+		return "", 0, "", fmt.Errorf("listen address %q: %q is not an IP address", listen, host)
+	}
+	return net.JoinHostPort(addr.String(), strconv.Itoa(p)), p, addr.String(), nil
+}

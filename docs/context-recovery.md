@@ -13,7 +13,7 @@ go-nx：Windows 10/11 上的轻量局域网远程控制。纯 Go、无 cgo、单
 
 - 已接入本机 release-publish：app `go-nx`，平台 `win-x64`，**0.1.0（versionCode 100）已发布**到线上。
 - 应用内自更新已实现并通过测试；**Windows 实机上的托盘、替换 exe、重启流程还没验证过**。
-- 当前工作是 [`ROADMAP.md`](ROADMAP.md) 的开发计划：**阶段 0 完成**（基线、状态文档、CI）；**阶段 1 进行中**，已完成「恶意主机上限 + fuzz」「JSON 原子写 + 损坏文件隔离」，「撤销已信任设备 / 忘记主机身份」（逐设备列表还没有）。「按来源限流 + 未认证连接上限」已完成。「默认开启认证」「一次性配对码」已完成。「首次连接指纹核对」已完成。剩余：监听地址可选、密码哈希 + DPAPI。
+- 当前工作是 [`ROADMAP.md`](ROADMAP.md) 的开发计划：**阶段 0 完成**（基线、状态文档、CI）；**阶段 1 已完成**，其内容：「恶意主机上限 + fuzz」「JSON 原子写 + 损坏文件隔离」，「撤销已信任设备 / 忘记主机身份」（逐设备列表还没有）。「按来源限流 + 未认证连接上限」已完成。「默认开启认证」「一次性配对码」已完成。「首次连接指纹核对」已完成。「监听地址可选（`-listen`）」已完成，**阶段 1 完成**（密码哈希 + DPAPI 经评估暂缓，理由见 ROADMAP「暂缓项」）。下一步是阶段 2（协议规范与版本协商）。
 - 所有提交已推送到 `origin main`；CI（`.github/workflows/ci.yml`，linux + windows-latest）在 `820d1f7` 上两个作业都通过。
 - 全局 git 身份：`orangepro2001 <yangziyi0801@gmail.com>`（2026-10-28 设置）。`98bda14` 的作者是 `tony`，没有改写。
 
@@ -78,6 +78,8 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 - `alreadyRunning` 重试时必须 `CloseHandle`，否则旧进程退出后互斥量仍被撑住。
 - 用 Python 之类批量替换文件时，找不到匹配会静默不改，改完要 `git diff` 核对。
 - 安装在只读目录时更新会失败，原因只写在日志里。
+- **推送后先等 CI 再继续**：CI 用了 `cancel-in-progress`，连续推送会取消前一次运行；本地绿的测试在 CI 上可能因时序失败（门限测试就这样失败过一次）。`gh run list --limit 3` 看结果。
+- 批量文本替换（Python `replace`）静默不改过两次：缩进 tab 数、gofmt 重新对齐都会让旧文本对不上。关键改动用 Edit，批量脚本里断言，改完 `git diff` 核对。
 - `build.sh` 对 `cmd/*/` 的每个目录都用 `-H=windowsgui` 构建；加入控制台程序（`nx-host`、`nx-probe`）前要先改这个循环。
 - zsh 里 `grep --include=*.go` 会报 "no matches found"（被当 glob），要加引号。
 - 计划模式下 Explore agent 不会跑 `go test`；测试基线要自己跑。
@@ -90,10 +92,10 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 
 1. **阶段 1 安全基线**（下一个）：默认开认证（含旧设置迁移）、一次性配对码 + 指纹核对、校验前不发密码、密码哈希 + DPAPI、撤销设备、按来源限流、恶意主机上限、JSON 原子写、fuzz。
 2. 阶段 2 协议规范与版本协商 → 阶段 3 回移 NightDesk 修复（只读快照 `/home/tony/dev/nightdesk-native-ux-20261028`）。
-3. 仍待用户在 Windows 上做：`ACCEPTANCE.md` §3 的 H1–H12（含自更新的 H1–H3）。
+3. 仍待用户在 Windows 上做：`ACCEPTANCE.md` §3 的 H1–H17（含自更新 H1–H3 和阶段 1 新增界面 H13–H17）。
 4. 可选：go-nx 专用 CI token；窗口主页也显示更新提示；Windows 代码签名；把签名私钥备份另存一份到本机之外。
 
 ## 最近一份交接文档
 
-[`docs/handoff-2026-10-28-phase0-baseline.md`](handoff-2026-10-28-phase0-baseline.md)：阶段 0 的成果、核对结论、验证、问题、取舍、经验、下一步。
-更早：[`docs/handoff-2026-10-28-release-publish.md`](handoff-2026-10-28-release-publish.md)（接入 release-publish）。
+[`docs/handoff-2026-10-28-phase1-security-baseline.md`](handoff-2026-10-28-phase1-security-baseline.md)：阶段 1（安全基线）的成果、行为变更（发布前要写进说明）、验证、问题、取舍、经验。
+更早：[`docs/handoff-2026-10-28-phase0-baseline.md`](handoff-2026-10-28-phase0-baseline.md)（阶段 0）、[`docs/handoff-2026-10-28-release-publish.md`](handoff-2026-10-28-release-publish.md)（接入 release-publish）。

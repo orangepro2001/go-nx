@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"log"
 	"net"
 	"sync"
@@ -151,10 +150,24 @@ func (h *hostState) tooltip() string {
 }
 
 // startHost begins sharing the primary screen in the background.
-func startHost(port, fps int, id tls.Certificate, trusted, settings *trust.Store) *hostState {
+//
+// listen restricts it to one local IP (see remote.ParseListen); empty means every
+// interface on port. The addresses the home tab shows are the ones that can reach it.
+func startHost(listen string, port, fps int, id tls.Certificate, trusted, settings *trust.Store) *hostState {
 	h := &hostState{
-		Port: port, Addrs: localIPs(), policy: trust.NewPolicy(trusted), settings: settings,
+		policy: trust.NewPolicy(trusted), settings: settings,
 		ID: trust.Fingerprint(id.Certificate[0])[:16],
+	}
+	bind, port, only, err := remote.ParseListen(listen, port)
+	if err != nil {
+		h.fail(err)
+		return h
+	}
+	h.Port = port
+	if only != "" {
+		h.Addrs = []string{only}
+	} else {
+		h.Addrs = localIPs()
 	}
 	h.policy.SetPassword(h.password())
 	h.policy.SetRequireAuth(h.requireAuth())
@@ -166,14 +179,14 @@ func startHost(port, fps int, id tls.Certificate, trusted, settings *trust.Store
 	}
 	log.Printf("startup: screen capture ready in %dms", time.Since(t0).Milliseconds())
 	t0 = time.Now()
-	ln, err := remote.Listen(fmt.Sprintf(":%d", port), id)
+	ln, err := remote.Listen(bind, id)
 	if err != nil {
 		h.fail(errors.New(explainListenError(err, port)))
 		return h
 	}
 	log.Printf("startup: QUIC listener ready in %dms", time.Since(t0).Milliseconds())
 	w, ht := scr.Size()
-	log.Printf("hosting %dx%d on UDP %d", w, ht, port)
+	log.Printf("hosting %dx%d on UDP %s", w, ht, bind)
 	go acceptLoop(h, ln, scr, inject.New(w, ht), fps)
 	return h
 }

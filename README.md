@@ -32,11 +32,12 @@ go test -race -cover ./...  # 核心包在 Linux 上即可测试；cmd/go-nx、c
 ## 运行
 
 ```
-go-nx.exe [-connect host:port] [-port 7000] [-fps 10] [-hidden] [-no-update]
+go-nx.exe [-connect host:port] [-port 7000] [-listen IP[:port]] [-fps 10] [-hidden] [-no-update]
 ```
 
 - 被控端：启动即在监听。点 "Pair new device (2 min)" 开 2 分钟配对窗口，页面会显示一次性 6 位码；新设备连接时把它填在 Password 里，成功后窗口即关闭，之后该设备不用密码。"Forget paired devices" 清空配对（点两次确认）。
 - 控制端：主页填 `IP:端口` 后点 "Connect"（回车切换字段，最后一个字段回车即连接）；`F3` 看日志；`Ctrl+Alt` 组合键用于标签页操作，细节见界面提示。
+- `-listen 192.168.1.5` 只在这块网卡上监听（默认所有接口）；只接受 IP，不接受主机名。
 - 配置、身份、信任列表、日志都在 `%AppData%\go-nx\`（日志 `go-nx.log`）。单实例（命名互斥量 `Local\go-nx-single-instance`）。
 
 ## 代码结构
