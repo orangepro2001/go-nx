@@ -36,6 +36,7 @@ type hostState struct {
 	policy     *trust.Policy
 	settings   *trust.Store
 	kick       func(code quic.ApplicationErrorCode, reason string) // closes the current controller; set by acceptLoop
+	sessions   *remote.Sessions                                    // which live sessions were let in without verification
 }
 
 func (h *hostState) fail(err error) {
@@ -90,7 +91,11 @@ func (h *hostState) requireAuth() bool {
 	return h.settings.Bool("require_auth", requireAuthDefault)
 }
 
-func (h *hostState) setRequireAuth(on bool) {
+// setRequireAuth switches between strict mode (on) and open mode (off) and saves
+// the choice. Going strict ends the sessions that were let in only because the host
+// was open, at once, and returns how many; paired devices and sessions that were
+// verified stay connected, so moving between the modes costs them nothing.
+func (h *hostState) setRequireAuth(on bool) (dropped int) {
 	h.policy.SetRequireAuth(on)
 	v := "0"
 	if on {
@@ -99,6 +104,11 @@ func (h *hostState) setRequireAuth(on bool) {
 	if err := h.settings.Set("require_auth", v); err != nil {
 		log.Printf("could not save setting: %v", err)
 	}
+	if on {
+		dropped = h.sessions.DropUnverified(remote.CloseUnverified, "the host now requires verification")
+	}
+	log.Printf("mode: %s (ended %d unverified session(s))", map[bool]string{true: "strict", false: "open"}[on], dropped)
+	return dropped
 }
 
 func (h *hostState) password() string {
@@ -121,13 +131,13 @@ func (h *hostState) check(fp, addr, password string) (trust.Verdict, error) {
 		trust.Untrusted: "not paired", trust.BadPassword: "wrong password", trust.Locked: "locked out",
 	}[v]
 	h.mu.Lock()
-	if v == trust.Allowed {
+	if v.Admitted() {
 		h.Rejected = ""
 	} else {
 		h.Rejected = addr + " (" + reason + ")"
 	}
 	h.mu.Unlock()
-	if v != trust.Allowed {
+	if !v.Admitted() {
 		log.Printf("refused %s: %s", addr, reason)
 	}
 	return v, err
@@ -158,6 +168,7 @@ func startHost(listen string, port, fps int, id tls.Certificate, trusted, settin
 		policy: trust.NewPolicy(trusted), settings: settings,
 		ID: trust.Fingerprint(id.Certificate[0])[:16],
 	}
+	h.sessions = remote.NewSessions(h.policy.RequireAuth)
 	bind, port, only, err := remote.ParseListen(listen, port)
 	if err != nil {
 		h.fail(err)
@@ -221,6 +232,7 @@ func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *injec
 				Check:           h.check,
 				InputController: inputController,
 				Gate:            gate,
+				Sessions:        h.sessions,
 				OnError:         func(err error) { log.Printf("session cleanup: %v", err) },
 				OnAuthed: func() {
 					mu.Lock()

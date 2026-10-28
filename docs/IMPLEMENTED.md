@@ -47,6 +47,7 @@
 
 | 项 | 状态 | 实际情况 | 位置 |
 |---|---|---|---|
+| 严格 / 开放模式（主页按钮） | 已实现（2026-10-28） | 主页的模式按钮在 **Strict**（默认，需配对或密码）和 **OPEN**（不验证）之间切换；严格 → 开放要点两次，开放 → 严格立即生效。判决新增 `AllowedOpen`（因开放而放进来、未验证）：`Policy.Check` 对已配对设备在两种模式下都返回 `Allowed`（所以随便切换不受影响），开放模式下的陌生人返回 `AllowedOpen`；配对在开放模式下仍可用。`remote.Sessions` 记录在线会话是否经过验证，切到严格时 `DropUnverified` 以 `CloseUnverified`(7) 立刻断开未验证的会话，已验证的保留；放行时也在同一把锁里复查严格状态，不会有会话漏过切换瞬间。新建的 `Policy` 默认严格（失败即关闭）。界面部分未在 Windows 上跑过（ACCEPTANCE H19） | `internal/trust/policy.go`、`internal/remote/sessions.go`、`cmd/go-nx/{host,main}_windows.go`、`internal/ui/home.go` |
 | 认证默认值 | **默认开启**（2026-10-28 改；此前默认关闭） | `settings.json` 里从没设置过 `require_auth` 的主机现在要求配对或密码；设置过 `"0"`/`"1"` 的保持原值（`trust.Store.Bool`）。关闭时（界面会警告）任何能连到端口的人都被允许。**这是行为变更**：升级后未配对的控制端会被拒绝，需要先配对 | `cmd/go-nx/host_windows.go`（`requireAuthDefault`）、`internal/trust` |
 | 证书/指纹 | 已实现 | 自签证书；客户端 TOFU 固定主机指纹，变化则 `ErrHostChanged` 硬失败；服务端要求任意客户端证书，信任由 `Policy` 决定 | `tls.go:57,72-91` |
 | 配对 | 部分（2026-10-28 改） | 主机上点按钮开 2 分钟窗口并显示**一次性 6 位码**；新设备把它填在 Password 里才配对，成功即关窗，全体来源累计错 10 次也关窗。无码模式（`StartPairing`）保留给不经界面的流程。**仍没有** 指纹核对、本机确认弹窗 | `internal/trust/policy.go`（`OpenPairing`、`NewPairingCode`）、`cmd/go-nx/host_windows.go`、`internal/ui/home.go` |

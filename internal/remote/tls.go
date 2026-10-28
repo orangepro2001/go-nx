@@ -35,6 +35,7 @@ const (
 	CloseLocked      = 4 // too many wrong passwords; try again later
 	CloseRevoked     = 5 // this device was removed from the host's paired devices
 	CloseBusy        = 6 // too many connections are waiting to be authenticated; try again shortly
+	CloseUnverified  = 7 // the host went back to strict mode and this session had not been verified
 )
 
 // ErrHostChanged means a host's certificate differs from the one remembered for its address.

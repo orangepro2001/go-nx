@@ -68,6 +68,21 @@ func FieldRect(i int) Rect { return Rect{fieldX, fieldY[i], fieldW, fieldH} }
 // RowRect is the clickable area of saved connection row (0 = first visible).
 func RowRect(row int) Rect { return Rect{listX, listTop + row*rowH, listW, rowH - 4} }
 
+// Text of the mode button in each state, kept here so a test can check that they fit.
+const (
+	ModeLabelStrict = "Strict mode: verification required (click for Open)"
+	ModeLabelOpen   = "OPEN mode: no verification! (click for Strict)"
+	ModeLabelArmed  = "Click again: anyone will be able to control this PC"
+	modePad         = 14
+	modeTextOffset  = modePad + 8 // the text starts after the status dot
+)
+
+// ModeRect is the strict / open mode button under the host status.
+func ModeRect() Rect { return Rect{leftX, chkY, 640, fieldH} }
+
+// modeTextWidth is the room for the button's text.
+func modeTextWidth() int { return ModeRect().W - modeTextOffset - modePad }
+
 // updateW is the width of the update button, wide enough for "Restart to update to v0.10.12 (required)".
 const updateW = 300
 
@@ -91,7 +106,7 @@ type HitKind int
 
 const (
 	HitNone HitKind = iota
-	HitCheckbox
+	HitMode         // strict / open mode button
 	HitPair
 	HitQuit
 	HitForget // forget every paired device
@@ -118,8 +133,8 @@ func HomeHit(x, y, nProfiles, scroll int) Hit {
 		return Hit{Kind: HitUpdate}
 	}
 	switch {
-	case Rect{leftX, chkY, 640, fieldH}.Contains(x, y):
-		return Hit{Kind: HitCheckbox}
+	case ModeRect().Contains(x, y):
+		return Hit{Kind: HitMode}
 	case Rect{leftX, actionY, btnW, btnH}.Contains(x, y):
 		return Hit{Kind: HitPair}
 	case Rect{quitX, actionY, quitW, btnH}.Contains(x, y):
@@ -177,6 +192,7 @@ type HomeData struct {
 	Scroll      int
 	DelArmed    int    // profile index awaiting a second click to delete, or -1
 	ForgetArmed bool   // "forget paired devices" awaiting a second click
+	ModeArmed   bool   // switching to open mode is awaiting a second click
 	Version     string // this build, e.g. "v0.2.0"
 	UpdateLabel string // text of the update button; "" when this build has no updater
 	UpdateReady bool   // a verified update is waiting, so the button is highlighted
@@ -227,15 +243,19 @@ func DrawHome(dst *ebiten.Image, face *text.GoTextFace, d *HomeData, oy int) {
 		}
 	}
 
-	// Verification switch.
-	Fill(dst, leftX, oy+chkY+3, 24, 24, ColHot)
-	Fill(dst, leftX+2, oy+chkY+5, 20, 20, ColInput)
-	label, lc := "Require pairing or password (off: anyone can connect)", ColWarn
-	if h.RequireAuth {
-		Fill(dst, leftX+6, oy+chkY+9, 12, 12, ColHot)
-		label, lc = "Require pairing or password", ColText
+	// Strict / open mode button. Strict is the safe state; opening up needs a second click.
+	m, bg, label := ModeRect(), ColBox, ModeLabelStrict
+	switch {
+	case d.ModeArmed:
+		bg, label = ColDanger, ModeLabelArmed
+	case !h.RequireAuth:
+		bg, label = ColDanger, ModeLabelOpen
 	}
-	t(Truncate(face, label, 600), leftX+36, chkY+2, lc)
+	Fill(dst, m.X, oy+m.Y, m.W, m.H, bg)
+	if h.RequireAuth && !d.ModeArmed {
+		Fill(dst, m.X+modePad-4, oy+m.Y+m.H/2-4, 8, 8, ColGood) // green dot: verifying
+	}
+	t(Truncate(face, label, float64(modeTextWidth())), m.X+modeTextOffset, m.Y+1, ColText)
 
 	drawField(dst, face, d, FHostPw, oy)
 	Fill(dst, leftX, oy+actionY, btnW, btnH, ColBox)

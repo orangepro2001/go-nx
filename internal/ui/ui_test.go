@@ -53,7 +53,7 @@ func TestHomeHit(t *testing.T) {
 		x, y int
 		want Hit
 	}{
-		{"checkbox", 40, chkY + 5, Hit{Kind: HitCheckbox}},
+		{"mode button", 40, chkY + 5, Hit{Kind: HitMode}},
 		{"pair", 100, actionY + 5, Hit{Kind: HitPair}},
 		{"quit", quitX + 10, actionY + 5, Hit{Kind: HitQuit}},
 		{"forget devices", leftX + 10, forgetY + 5, Hit{Kind: HitForget}},
@@ -133,7 +133,7 @@ func TestHostErrorFitsAboveCheckbox(t *testing.T) {
 	msg := "Hosting unavailable: UDP port 7000 is in use by loopback.exe (process 12345). " +
 		"End the older go-nx / host.exe in Task Manager, or start with -port."
 	if n := len(Wrap(face, msg, 630)); n > 3 {
-		t.Fatalf("the message needs %d lines; only 3 fit above the checkbox", n)
+		t.Fatalf("the message needs %d lines; only 3 fit above the mode button", n)
 	}
 }
 
@@ -164,6 +164,20 @@ func TestUpdateButtonDoesNotCoverAnythingElse(t *testing.T) {
 	for i := 0; i < NumFields; i++ {
 		if overlaps(u, FieldRect(i)) {
 			t.Errorf("update button overlaps field %d", i)
+		}
+	}
+}
+
+// The three states of the mode button must fit on it without being cut off:
+// a truncated warning is a warning nobody reads.
+func TestModeButtonLabelsFit(t *testing.T) {
+	face, err := NewFace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, label := range []string{ModeLabelStrict, ModeLabelOpen, ModeLabelArmed} {
+		if w := Width(face, label); w > float64(modeTextWidth()) {
+			t.Errorf("%q is %.0f px wide, the button has %d px of room", label, w, modeTextWidth())
 		}
 	}
 }

@@ -68,6 +68,7 @@ type app struct {
 	delArmed    int    // saved connection waiting for a second click to delete, or -1
 	forgetArmed bool   // "forget paired devices" waiting for a second click
 	updateArmed bool   // a ready update waiting for a second click, since installing it restarts go-nx
+	modeArmed   bool   // switching to open mode waiting for a second click
 	message     string // last note or error, shown on the home tab
 
 	renaming     int // tab-bar index being renamed, 0 for none
@@ -452,10 +453,23 @@ func (a *app) updateHome() {
 		a.forgetArmed = false
 		updateArmed := a.updateArmed
 		a.updateArmed = false
+		modeArmed := a.modeArmed
+		a.modeArmed = false
 		hit := ui.HomeHit(cx, hy, len(a.profiles.Items), a.scroll)
 		switch hit.Kind {
-		case ui.HitCheckbox:
-			a.host.setRequireAuth(!a.host.requireAuth())
+		case ui.HitMode:
+			switch {
+			case a.host.requireAuth() && !modeArmed:
+				a.modeArmed = true // opening up is the dangerous direction: ask once more
+			case a.host.requireAuth():
+				a.host.setRequireAuth(false)
+				a.message = "Open mode: anyone who can reach this PC can control it, with no verification"
+			default:
+				a.message = "Strict mode: pairing or a password is required"
+				if n := a.host.setRequireAuth(true); n > 0 {
+					a.message += fmt.Sprintf(". Ended %d session(s) that were not verified", n)
+				}
+			}
 		case ui.HitPair:
 			a.host.startPairing()
 		case ui.HitQuit:
@@ -575,7 +589,7 @@ func (a *app) homeData() *ui.HomeData {
 	}
 	return &ui.HomeData{
 		Host: a.host.info(), Fields: a.fields, Focus: a.focus, Profiles: a.profiles.Items,
-		Scroll: a.scroll, DelArmed: a.delArmed, ForgetArmed: a.forgetArmed, Message: msg,
+		Scroll: a.scroll, DelArmed: a.delArmed, ForgetArmed: a.forgetArmed, ModeArmed: a.modeArmed, Message: msg,
 		Version: versionLabel(), UpdateLabel: label, UpdateReady: ready,
 		Caret: time.Now().UnixMilli()/500%2 == 0,
 	}

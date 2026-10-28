@@ -301,6 +301,8 @@ func describe(err error) string {
 			return "Too many wrong passwords; try again in a minute"
 		case remote.CloseReplaced:
 			return "Another client took over this host"
+		case remote.CloseUnverified:
+			return "The host switched to strict mode and this PC is not verified. Pair it (the host's \"Pair new device\" shows a code) or enter the host's password, then connect again"
 		case remote.CloseBusy:
 			return "The host is busy with other connection attempts; try again in a moment"
 		case remote.CloseRevoked:

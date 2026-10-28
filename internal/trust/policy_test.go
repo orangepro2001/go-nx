@@ -93,14 +93,61 @@ func TestPairedDeviceIgnoresLockout(t *testing.T) {
 	check(t, p, "aa", "", Allowed)
 }
 
-func TestOpenByDefaultUntilAuthRequired(t *testing.T) {
+func TestOpenModeAdmitsStrangersAsUnverified(t *testing.T) {
 	s, _ := OpenStore(filepath.Join(t.TempDir(), "trusted.json"))
 	p := NewPolicy(s)
-	check(t, p, "anyone", "", Allowed)
+	check(t, p, "anyone", "", Untrusted) // a fresh policy is strict: it fails closed
+	p.SetRequireAuth(false)
+	check(t, p, "anyone", "", AllowedOpen)
 	p.SetRequireAuth(true)
 	check(t, p, "anyone", "", Untrusted)
 	p.SetRequireAuth(false)
-	check(t, p, "anyone", "", Allowed)
+	check(t, p, "anyone", "", AllowedOpen)
+	if !AllowedOpen.Admitted() || !Allowed.Admitted() || Untrusted.Admitted() || BadPassword.Admitted() || Locked.Admitted() {
+		t.Fatal("Admitted must be true for exactly Allowed and AllowedOpen")
+	}
+}
+
+// A device that was paired under strict mode stays verified when the host is
+// opened up, so switching modes never demotes it.
+func TestPairedDeviceStaysVerifiedInOpenMode(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.StartPairing(time.Minute)
+	check(t, p, "aa", "", Allowed) // paired in strict mode
+	p.SetRequireAuth(false)
+	check(t, p, "aa", "", Allowed)           // still verified
+	check(t, p, "stranger", "", AllowedOpen) // a stranger is merely let in
+	p.SetRequireAuth(true)
+	check(t, p, "aa", "", Allowed)
+	check(t, p, "stranger", "", Untrusted)
+}
+
+// Pairing keeps working while the host is open, so a device can be paired first
+// and the host switched to strict mode afterwards.
+func TestPairingCodeWorksInOpenMode(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.SetRequireAuth(false)
+	p.OpenPairing("123456", time.Minute)
+	checkFrom(t, p, "10.0.0.1:1", "000000", AllowedOpen) // a wrong code is not an error when nothing is checked
+	if p.TrustedCount() != 0 {
+		t.Fatal("a wrong code paired a device")
+	}
+	checkFrom(t, p, "10.0.0.2:1", "123456", Allowed) // the right one pairs it, so it is verified
+	if p.TrustedCount() != 1 {
+		t.Fatalf("TrustedCount = %d, want 1", p.TrustedCount())
+	}
+	checkFrom(t, p, "10.0.0.3:1", "123456", AllowedOpen) // and the window closed
+}
+
+func TestRequireAuthGetter(t *testing.T) {
+	p, _ := newPolicy(t)
+	if !p.RequireAuth() {
+		t.Fatal("newPolicy sets strict mode")
+	}
+	p.SetRequireAuth(false)
+	if p.RequireAuth() {
+		t.Fatal("RequireAuth still true after switching to open")
+	}
 }
 
 func TestRevokeTurnsAPairedDeviceBackIntoAStranger(t *testing.T) {

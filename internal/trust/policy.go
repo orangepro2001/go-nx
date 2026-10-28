@@ -14,10 +14,11 @@ import (
 type Verdict int
 
 const (
-	Allowed     Verdict = iota
-	Untrusted           // not paired, no pairing open, no (valid) password offered
-	BadPassword         // a password was offered and it is wrong
-	Locked              // too many wrong passwords recently
+	Allowed     Verdict = iota // verified: a paired device, or one that offered the right password or pairing code
+	Untrusted                  // not paired, no pairing open, no (valid) password offered
+	BadPassword                // a password was offered and it is wrong
+	Locked                     // too many wrong passwords recently
+	AllowedOpen                // let in only because the host is in open mode: not verified
 )
 
 // Limits on guessing the host password. They apply per source address, so one
@@ -43,6 +44,9 @@ type source struct {
 	strikes     int // lockouts in a row; each one lasts twice as long as the last
 }
 
+// Admitted reports whether the viewer may control the PC: Allowed or AllowedOpen.
+func (v Verdict) Admitted() bool { return v == Allowed || v == AllowedOpen }
+
 // Policy decides who may control this PC. Verification is optional: until
 // SetRequireAuth(true), every viewer is allowed. Once it is on, in order:
 //  1. a device whose fingerprint was paired before is allowed;
@@ -63,8 +67,17 @@ type Policy struct {
 	now         func() time.Time
 }
 
+// NewPolicy starts strict: until SetRequireAuth(false) is called, a viewer must
+// be paired or offer the right password or pairing code.
 func NewPolicy(trusted *Store) *Policy {
-	return &Policy{trusted: trusted, now: time.Now, sources: map[string]*source{}}
+	return &Policy{trusted: trusted, requireAuth: true, now: time.Now, sources: map[string]*source{}}
+}
+
+// RequireAuth reports whether strict mode is on.
+func (p *Policy) RequireAuth() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.requireAuth
 }
 
 // SetRequireAuth turns verification on or off.
@@ -147,24 +160,45 @@ func (p *Policy) RevokeAll() (int, error) { return p.trusted.Clear() }
 // Check decides about a viewer with certificate fingerprint fp from addr, which
 // offered password (possibly empty). While a coded pairing window is open the
 // password is also how a new device offers the pairing code.
+//
+// A paired device is always Allowed, in either mode. In open mode everyone else is
+// AllowedOpen (let in, not verified) unless they complete a pairing, which still
+// works so a device can be paired before the host goes back to strict mode.
 func (p *Policy) Check(fp, addr, password string) (Verdict, error) {
-	p.mu.Lock()
-	open := !p.requireAuth
-	p.mu.Unlock()
-	if open {
-		return Allowed, nil
-	}
 	if _, ok := p.trusted.Get(fp); ok {
 		return Allowed, nil
 	}
 	p.mu.Lock()
-	verdict, pair := p.decideLocked(addr, password)
+	var verdict Verdict
+	var pair bool
+	if p.requireAuth {
+		verdict, pair = p.decideLocked(addr, password)
+	} else {
+		verdict, pair = p.openLocked(password)
+	}
 	p.mu.Unlock()
 	if pair {
 		// Failing to save only costs the user another pairing next time.
 		return verdict, p.trusted.Set(fp, addr+" "+p.now().Format("2006-01-02 15:04"))
 	}
 	return verdict, nil
+}
+
+// openLocked handles a device that is not paired when the host is in open mode.
+// It is let in either way; the only question is whether it just paired. Wrong
+// codes are not penalised and nothing is rate-limited, because nothing is being
+// checked. Callers hold p.mu.
+func (p *Policy) openLocked(password string) (v Verdict, pair bool) {
+	pairing := p.now().Before(p.pairUntil)
+	switch {
+	case pairing && p.pairCode == "":
+		p.closePairingLocked() // one device per pairing
+		return Allowed, true
+	case pairing && password != "" && subtle.ConstantTimeCompare([]byte(password), []byte(p.pairCode)) == 1:
+		p.closePairingLocked()
+		return Allowed, true
+	}
+	return AllowedOpen, false
 }
 
 // decideLocked handles a device that is not paired. pair is true when the device

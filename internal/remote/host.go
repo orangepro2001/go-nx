@@ -39,6 +39,7 @@ type Options struct {
 	OnError         func(error)      // non-fatal session problems
 	InputController *InputController // shared controller for releasing inputs across sessions
 	Gate            *Gate            // optional cap on connections awaiting authentication
+	Sessions        *Sessions        // optional: lets the host end sessions that were let in without verification
 }
 
 // minRate is the slowest link we still expect to deliver a frame on. A frame's
@@ -118,7 +119,7 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 		}
 	}
 	leaveGate() // decided: no longer waiting to be authenticated
-	if verdict != trust.Allowed {
+	if !verdict.Admitted() {
 		code := map[trust.Verdict]quic.ApplicationErrorCode{
 			trust.BadPassword: CloseBadPassword, trust.Locked: CloseLocked,
 		}[verdict]
@@ -128,6 +129,16 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 		closeWithDefault = false
 		conn.CloseWithError(code, "refused")
 		return ErrDenied
+	}
+
+	if opt.Sessions != nil {
+		remove, ok := opt.Sessions.add(conn, verdict == trust.AllowedOpen)
+		if !ok { // the host went strict between the policy's decision and now
+			closeWithDefault = false
+			conn.CloseWithError(CloseUnverified, "host requires verification")
+			return ErrDenied
+		}
+		defer remove()
 	}
 
 	input := inj
