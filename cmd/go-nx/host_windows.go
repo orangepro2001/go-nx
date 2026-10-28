@@ -24,7 +24,9 @@ import (
 	"github.com/orangepro2001/go-nx/internal/ui/i18n"
 )
 
-const pairingWindow = 2 * time.Minute
+// pairingWindow is long enough to walk to the other PC, confirm the host's ID there and type
+// the code. Guessing is limited by the number of wrong codes (trust.maxPairFails), not by time.
+const pairingWindow = 5 * time.Minute
 
 // hostState is the hosting side: who may connect, and what the UI shows about it.
 // The decisions themselves are made by trust.Policy.
@@ -217,9 +219,9 @@ func (h *hostState) check(fp, addr, password string) (trust.Verdict, error) {
 	}
 	h.mu.Unlock()
 	if !v.Admitted() {
-		log.Printf("refused %s: %s", addr, map[trust.Verdict]string{
+		log.Printf("refused %s: %s (%s)", addr, map[trust.Verdict]string{
 			trust.Untrusted: "not paired", trust.BadPassword: "wrong password", trust.Locked: "locked out",
-		}[v])
+		}[v], h.policy.Explain(password))
 		h.changed()
 	}
 	return v, err

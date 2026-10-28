@@ -52,6 +52,25 @@ func describe(tr *i18n.Translator, err error) (text string, hostChanged bool) {
 	return tr.T(i18n.KeyErrRaw, "error", err.Error()), false
 }
 
+// refusedCode is the code the host closed the connection with, or 0.
+func refusedCode(err error) quic.ApplicationErrorCode {
+	var ae *quic.ApplicationError
+	if errors.As(err, &ae) {
+		return ae.ErrorCode
+	}
+	return 0
+}
+
+// refusedAuth reports whether the host turned this PC away for want of a valid password or
+// pairing code, which only another one can fix.
+func refusedAuth(err error) bool {
+	switch refusedCode(err) {
+	case remote.CloseUntrusted, remote.CloseBadPassword, remote.CloseLocked, remote.CloseRevoked, remote.CloseUnverified:
+		return true
+	}
+	return false
+}
+
 // isHostChanged reports whether err is the host presenting an identity other than the
 // pinned one, which retrying cannot fix.
 func isHostChanged(err error) bool {

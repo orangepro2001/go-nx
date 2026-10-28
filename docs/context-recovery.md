@@ -11,6 +11,7 @@ go-nx：Windows 10/11 上的轻量局域网远程控制。纯 Go、无 cgo、单
 
 ## 当前状态（2026-10-28 晚）
 
+- **最新一轮（配对被拒）**：用户报告 0.7.0 上配对码和密码都被拒（截图："已断开：密码或配对码错误"）。没拿到日志，根因未在真机确认；修了代码里能让正确的码 / 密码被发错或判错的几处（码带空格、重试沿用错密码且无处修改、密码框看不到内容、窗口 2 分钟太短、托盘重复点换码、日志不说原因），见 `docs/handoff-2026-10-28-pairing-refused.md`，真机验证是 `ACCEPTANCE.md` H35。发布为 go-nx 0.7.1 与 go-nx-core 0.2.1（`trust.Policy` 与 nx-host 的日志也变了）。
 - **线上最新**：`go-nx` **0.7.0**（新界面，versionCode 700，sha256 `d6c77efd…8aade018`）、`go-nx-core` **0.2.0**（`nx-host` / `nx-probe` / 契约的 zip，**单独的应用**，`CORE_VERSION`，versionCode 200）。完整哈希见 `compat-matrix.md`。0.6.0 是动态帧率；0.5.0 及更早仍在列表里。release-publish 现在跑在 **podman 容器** `release-publish` 里（`~/dev/release-publish/deploy/container.sh`，systemd 单元不再使用），应用有 `go-nx`、`go-nx-core`、`clipbridge`。交接见 `docs/handoff-2026-10-28-ui-implementation.md`。
 - **这一轮做了三件事**（用户："开始实现ui。核心文件作为单独应用发布，要动态帧率。"）：①**动态帧率**（0.6.0）：画面在变 10 fps，控制端操作 30 fps，静止 3 s 后 2 fps，输入立刻唤醒；②**核心单独发布**：`go-nx-core`，版本独立，zip 可复现，`scripts/ship.sh --core`；③**新界面**（U1–U4，0.7.0）：`internal/app` 是可移植的整个应用（页面、对话框、会话、连接流程），`internal/ui/{theme,i18n,text,kit,gfx}` 是工具箱，`cmd/go-nx` 只剩 Windows 适配；旧 `internal/ui` 已删除。
 - **新界面的验证**：布局（四种语言含伪语言 × 四种窗口尺寸）、行为（各流程用假的主机 / 连接 / 平台）、GPU（颜色与朝向、形状位置、裁剪，Xvfb 上与 Windows 运行器上都跑）、真实 `go-nx.exe` 在 Windows 运行器上启动到第一帧（冒烟测试，阻塞）、截图 artifact（`ui-linux`、`ui-windows`，用真实字体）。**没有的**：任何一次在你的 PC 上由人使用——`ACCEPTANCE.md` H31–H34。
@@ -114,7 +115,8 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 
 ## 最近一份交接文档
 
-[`docs/handoff-2026-10-28-ui-plan-v2.md`](handoff-2026-10-28-ui-plan-v2.md)：UI 方案 v2（效率优先、蓝色、中 / 英 / 韩三语），含对 v1 的更正和这次从源码查实的事实。
+[`docs/handoff-2026-10-28-pairing-refused.md`](handoff-2026-10-28-pairing-refused.md)：配对码 / 密码被拒的排查与修复（0.7.1 / core 0.2.1），给用户的下一步是把主机日志里 `refused` 那一行发来。
+更早：[`docs/handoff-2026-10-28-ui-plan-v2.md`](handoff-2026-10-28-ui-plan-v2.md)：UI 方案 v2（效率优先、蓝色、中 / 英 / 韩三语），含对 v1 的更正和这次从源码查实的事实。
 更早：[`docs/handoff-2026-10-28-mode-button-ui-plan.md`](handoff-2026-10-28-mode-button-ui-plan.md)（模式按钮 0.3.0 与 UI 方案 v1）。
 更早：[`docs/handoff-2026-10-28-release-0.2.0.md`](handoff-2026-10-28-release-0.2.0.md)：回答"有没有自动推送更新"、主页更新按钮、`ship.sh`、0.2.0 的发布与独立验证。
 更早：[`docs/handoff-2026-10-28-phase1-security-baseline.md`](handoff-2026-10-28-phase1-security-baseline.md)：阶段 1（安全基线）的成果、行为变更（发布前要写进说明）、验证、问题、取舍、经验。

@@ -268,7 +268,7 @@ func (h *Host) check(fp, addr, password string) (trust.Verdict, error) {
 			reason = "refused"
 		}
 		h.em.Emit(Event{Event: "denied", Addr: addr, Reason: reason, Identity: fp})
-		h.log.Printf("refused %s: %s (%s)", addr, reason, fp)
+		h.log.Printf("refused %s: %s (%s; %s)", addr, reason, fp, h.policy.Explain(password))
 	}
 	return v, err
 }

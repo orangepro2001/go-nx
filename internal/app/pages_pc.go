@@ -127,7 +127,7 @@ func (a *App) setStrict(on bool) {
 func (a *App) passwordCard() kit.Node {
 	tr := a.tr
 	return a.card(tr.T(i18n.KeyPCPassword), kit.Color{},
-		kit.Sized{MaxW: 360, Child: &kit.TextField{ID: "pc.password", Value: &a.hostPw, Mask: true, MaxLen: 64, OnChange: func() { a.cfg.Host.SetPassword(a.hostPw) }}},
+		kit.Sized{MaxW: 420, Child: a.secretField(&kit.TextField{ID: "pc.password", Value: &a.hostPw, MaxLen: 64, OnChange: func() { a.cfg.Host.SetPassword(a.hostPw) }})},
 		a.caption(tr.T(i18n.KeyPCPasswordHint)),
 	)
 }

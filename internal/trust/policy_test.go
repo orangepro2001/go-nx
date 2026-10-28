@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -293,6 +294,63 @@ func TestPairingCodePairsOnlyTheDeviceThatEntersIt(t *testing.T) {
 	check(t, p, "bb", "123456", Untrusted)
 	if p.PairingLeft() != 0 {
 		t.Errorf("PairingLeft = %v after a successful pairing", p.PairingLeft())
+	}
+}
+
+// The host shows the code as "123 456". Typed the way it is shown, with the gap, or with
+// an input method's full-width digits, it is still the code.
+func TestPairingCodeIsReadTheWayItIsShown(t *testing.T) {
+	for _, typed := range []string{"123 456", " 123456 ", "123-456", "１２３４５６", "１２３ ４５６"} {
+		for _, strict := range []bool{true, false} {
+			p, _ := newPolicy(t)
+			p.SetRequireAuth(strict)
+			p.OpenPairing("123456", time.Minute)
+			check(t, p, "aa", typed, Allowed)
+			if p.TrustedCount() != 1 {
+				t.Errorf("%q (strict %v): not paired", typed, strict)
+			}
+		}
+	}
+	for _, typed := range []string{"12345", "1234567", "123 4567", "123x456", "654 321"} {
+		p, _ := newPolicy(t)
+		p.OpenPairing("123456", time.Minute)
+		check(t, p, "aa", typed, BadPassword)
+	}
+	// The host password is compared exactly: a space in it is part of it.
+	p, _ := newPolicy(t)
+	p.SetPassword("ab cd")
+	check(t, p, "aa", "abcd", BadPassword)
+	check(t, p, "aa", "ab cd", Allowed)
+}
+
+// The log says what was offered and what the host would have taken, never either secret.
+func TestExplainTellsAnExpiredCodeFromAWrongOne(t *testing.T) {
+	p, c := newPolicy(t)
+	if got := p.Explain(""); got != "nothing offered; pairing not open; no host password" {
+		t.Errorf("idle host: %q", got)
+	}
+	p.SetPassword("s3cret-pw")
+	p.OpenPairing("123456", 2*time.Minute)
+	c.t = c.t.Add(30 * time.Second)
+	if got := p.Explain("654 321"); got != "offered a 6-digit code; pairing open, 1m30s left; host password set" {
+		t.Errorf("wrong code while open: %q", got)
+	}
+	c.t = c.t.Add(2 * time.Minute)
+	if got := p.Explain("123456"); got != "offered a 6-digit code; pairing ran out 30s ago; host password set" {
+		t.Errorf("code after the window: %q", got)
+	}
+	got := p.Explain("hunter22")
+	if got != "offered a password, length 8; pairing ran out 30s ago; host password set" {
+		t.Errorf("a password: %q", got)
+	}
+	for _, secret := range []string{"hunter22", "s3cret-pw", "123456"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("%q gives away %q", got, secret)
+		}
+	}
+	p.ClosePairing()
+	if got := p.Explain("1"); got != "offered a password, length 1; pairing not open; host password set" {
+		t.Errorf("after closing: %q", got)
 	}
 }
 

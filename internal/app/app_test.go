@@ -5,7 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/quic-go/quic-go"
+
 	"github.com/orangepro2001/go-nx/internal/profiles"
+	"github.com/orangepro2001/go-nx/internal/remote"
 	"github.com/orangepro2001/go-nx/internal/ui/i18n"
 	"github.com/orangepro2001/go-nx/internal/ui/kit"
 	"github.com/orangepro2001/go-nx/internal/update"
@@ -111,6 +114,96 @@ func TestAKnownHostGoesStraightThroughAndFailuresOfferRetry(t *testing.T) {
 	r.wait("the retry to connect", func() bool { return r.a.tabs[0].state == tabLive })
 	if r.conn.dials < 2 {
 		t.Errorf("dials %d", r.conn.dials)
+	}
+}
+
+// The host refused the code: Retry must not send the same one again. The card asks for
+// another, already cleared and with the keyboard, and Enter sends what is typed there.
+func TestARefusedPasswordIsAskedForAgainNotResent(t *testing.T) {
+	r := newRig(t)
+	r.conn.pinned["10.0.0.5:7000"] = "x"
+	r.conn.refuse = &quic.ApplicationError{ErrorCode: remote.CloseBadPassword, Remote: true}
+	r.a.quickAddr, r.a.quickPw = "10.0.0.5", "123465"
+	r.a.connectQuick()
+	r.wait("the refusal", func() bool { return r.a.tabs[0].state == tabError })
+	if !r.has("Wrong password or pairing code.") || !r.has("Password or pairing code") || !r.has("A pairing code works once") {
+		t.Fatalf("the card does not ask for another password: %q", r.texts())
+	}
+	if r.a.tabs[0].password != "" {
+		t.Errorf("the refused password %q is still there to be sent again", r.a.tabs[0].password)
+	}
+	field := kit.ID("sess.pw." + itoa(r.a.tabs[0].serial))
+	if r.a.ui.Focused() != field {
+		t.Fatalf("focus is on %q, not on the password field", r.a.ui.Focused())
+	}
+	r.conn.refuse = nil
+	r.typ("123456")
+	r.key(kit.KeyPress{Key: kit.KeyEnter})
+	r.wait("the second try to go live", func() bool { return r.a.tabs[0].state == tabLive })
+	if got := r.conn.passwords; len(got) != 2 || got[0] != "123465" || got[1] != "123456" {
+		t.Errorf("passwords sent %q, want the refused one and then the one typed on the card", got)
+	}
+}
+
+// Locked out: the password may well be right, so it is kept for the retry after the wait.
+// Not paired: the card asks too. A network failure does not.
+func TestWhichFailuresAskForAPassword(t *testing.T) {
+	cases := []struct {
+		err  error
+		ask  bool
+		keep bool
+	}{
+		{&quic.ApplicationError{ErrorCode: remote.CloseLocked, Remote: true}, true, true},
+		{&quic.ApplicationError{ErrorCode: remote.CloseUntrusted, Remote: true}, true, true},
+		{&quic.ApplicationError{ErrorCode: remote.CloseRevoked, Remote: true}, true, true},
+		{&quic.ApplicationError{ErrorCode: remote.CloseKicked, Remote: true}, false, true},
+		{errString("connection refused"), false, true},
+	}
+	for _, c := range cases {
+		r := newRig(t)
+		r.conn.pinned["10.0.0.6:7000"] = "x"
+		if _, ok := c.err.(*quic.ApplicationError); ok {
+			r.conn.refuse = c.err
+		} else {
+			r.conn.dialErr = c.err
+		}
+		r.a.openTab("", "10.0.0.6", "s3cret", "")
+		r.wait("the failure", func() bool { return r.a.tabs[0].state == tabError })
+		if got := r.has("Password or pairing code"); got != c.ask {
+			t.Errorf("%v: asks for a password %v, want %v", c.err, got, c.ask)
+		}
+		if got := r.a.tabs[0].password == "s3cret"; got != c.keep {
+			t.Errorf("%v: password kept %v, want %v", c.err, got, c.keep)
+		}
+	}
+}
+
+// A password field shows what was typed only when asked, and never through the input method.
+func TestPasswordFieldsCanShowWhatWasTyped(t *testing.T) {
+	r := newRig(t)
+	r.a.ui.Focus("quick.pw", true)
+	r.typ("123 456")
+	if r.has("123 456") {
+		t.Fatal("the password is on screen before Show was pressed")
+	}
+	r.pressButton("quick.pw/show")
+	if !r.has("123 456") || !r.has("Hide") {
+		t.Fatalf("Show did not show it: %q", r.texts())
+	}
+	r.a.ui.Focus("quick.pw", true)
+	r.paint()
+	if _, wanted := r.a.ui.IME(); wanted {
+		t.Error("a password field that is showing its text asked for the input method")
+	}
+	r.pressButton("quick.pw/show")
+	if r.has("123 456") {
+		t.Error("Hide did not hide it")
+	}
+	// The host's own password has the same button.
+	r.a.ShowPage(PageThisPC)
+	r.step(kit.Input{})
+	if !r.has("Show") {
+		t.Errorf("no Show button on This PC: %q", r.texts())
 	}
 }
 

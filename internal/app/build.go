@@ -101,6 +101,26 @@ func (a *App) labelled(label string, control kit.Node) kit.Node {
 	return &kit.Col{Gap: theme.S1, Align: kit.AlignStretch, Children: []kit.Node{a.caption(label), control}}
 }
 
+// secretField is a password field with a button that shows what was typed, so that a code
+// or password can be checked before it is sent. It never uses the input method, shown or
+// not: an input method would turn the letters of a password into a word.
+func (a *App) secretField(f *kit.TextField) kit.Node {
+	shown := a.revealed[f.ID]
+	f.Mask, f.NoIME = !shown, true
+	label := a.tr.T(i18n.KeyShowPw)
+	if shown {
+		label = a.tr.T(i18n.KeyHidePw)
+	}
+	id := f.ID
+	return &kit.Row{Gap: theme.S1, Align: kit.AlignCenter, Children: []kit.Node{
+		kit.Grow(1, f),
+		&kit.Button{ID: id + "/show", Label: label, Kind: kit.Ghost, Compact: true, OnClick: func() {
+			a.revealed[id] = !shown
+			a.ui.Invalidate()
+		}},
+	}}
+}
+
 // banner is the strip shown on every page while the host is in open mode: the dangerous
 // state stays in front of the person for as long as it lasts.
 func (a *App) banner() kit.Node {

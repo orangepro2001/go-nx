@@ -26,7 +26,7 @@ func (a *App) quickConnect() kit.Node {
 	return a.card(tr.T(i18n.KeyDevQuickTitle), kit.Color{},
 		&kit.Row{Gap: theme.S3, Align: kit.AlignCenter, Children: []kit.Node{
 			kit.Grow(3, &kit.TextField{ID: "quick.addr", Value: &a.quickAddr, Placeholder: tr.T(i18n.KeyDevAddrPlaceholder), MaxLen: 128, OnSubmit: a.connectQuick}),
-			kit.Grow(2, &kit.TextField{ID: "quick.pw", Value: &a.quickPw, Placeholder: tr.T(i18n.KeyDevPwPlaceholder), Mask: true, MaxLen: 64, OnSubmit: a.connectQuick}),
+			kit.Grow(2, a.secretField(&kit.TextField{ID: "quick.pw", Value: &a.quickPw, Placeholder: tr.T(i18n.KeyDevPwPlaceholder), MaxLen: 64, OnSubmit: a.connectQuick})),
 			&kit.Button{ID: "quick.connect", Label: tr.T(i18n.KeyConnect), Kind: kit.Primary, Icon: kit.IconPlug, MinW: 120, OnClick: a.connectQuick},
 		}},
 		&kit.Row{Children: []kit.Node{
@@ -218,7 +218,7 @@ func (a *App) openDeviceDialog(editing, addr, pw string) {
 		fields := &kit.Col{Gap: theme.S3, Align: kit.AlignStretch, Children: []kit.Node{
 			a.labelled(tr.T(i18n.KeyName), &kit.TextField{ID: "dlg.name", Value: &name, MaxLen: 48, OnSubmit: save}),
 			a.labelled(tr.T(i18n.KeyAddress), &kit.TextField{ID: "dlg.addr", Value: &addr, Placeholder: tr.T(i18n.KeyDevAddrPlaceholder), MaxLen: 128, OnSubmit: save}),
-			a.labelled(tr.T(i18n.KeyPassword), &kit.TextField{ID: "dlg.pw", Value: &pw, Placeholder: tr.T(i18n.KeyDevPwPlaceholder), Mask: true, MaxLen: 64, OnSubmit: save}),
+			a.labelled(tr.T(i18n.KeyPassword), a.secretField(&kit.TextField{ID: "dlg.pw", Value: &pw, Placeholder: tr.T(i18n.KeyDevPwPlaceholder), MaxLen: 64, OnSubmit: save})),
 		}}
 		if problem != "" {
 			fields.Children = append(fields.Children, &kit.Label{Text: problem, Color: a.ui.Pal.Bad, Wrap: true})

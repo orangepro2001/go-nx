@@ -84,7 +84,11 @@ func startTray(a *app.App, h *hostState) {
 				a.Do(func() { a.ShowPage(app.PageLogs) })
 				show()
 			case <-pair.ClickedCh:
-				h.StartPairing()
+				// While a code is showing, a second click only brings it back into view: a new
+				// code would silently invalidate the one the person may already be typing.
+				if h.pairingLeft() <= 0 {
+					h.StartPairing()
+				}
 				a.Do(func() { a.ShowPage(app.PageThisPC) })
 				show()
 			case <-updClicks:

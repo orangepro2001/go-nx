@@ -35,7 +35,7 @@ go test -race -cover ./...  # 核心包在 Linux 上即可测试；cmd/go-nx、c
 go-nx.exe [-connect host:port] [-port 7000] [-listen IP[:port]] [-fps 10] [-fps-active 30] [-fps-idle 2] [-hidden] [-no-update]
 ```
 
-- 被控端：启动即在监听。点 "Pair new device (2 min)" 开 2 分钟配对窗口，页面会显示一次性 6 位码；新设备连接时把它填在 Password 里，成功后窗口即关闭，之后该设备不用密码。"Forget paired devices" 清空配对（点两次确认）。
+- 被控端：启动即在监听。在"本机"页点"开始配对（5 分钟）"开 5 分钟配对窗口，页面会显示一次性 6 位码；新设备连接时把它填在 Password 里，成功后窗口即关闭，之后该设备不用密码。"Forget paired devices" 清空配对（点两次确认）。
 - 控制端：主页填 `IP:端口` 后点 "Connect"（回车切换字段，最后一个字段回车即连接）；`F3` 看日志；`Ctrl+Alt` 组合键用于标签页操作，细节见界面提示。
 - `-listen 192.168.1.5` 只在这块网卡上监听（默认所有接口）；只接受 IP，不接受主机名。
 - 帧率：`-fps` 是画面在变化时的帧率，`-fps-active` 是控制端操作时的帧率（`0` 关闭升帧），`-fps-idle` 是画面和输入都静止 3 s 后的帧率（`0` 关闭降帧）。`-fps-active 0 -fps-idle 0` 就是固定帧率。

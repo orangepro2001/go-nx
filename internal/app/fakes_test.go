@@ -161,16 +161,21 @@ func (u *fakeUpdater) set(st update.Status, pending bool) {
 	u.st, u.pending = st, pending
 }
 
-// fakeConn is a connection that does nothing but stay open until closed.
+// fakeConn is a connection that does nothing but stay open until closed, or, with refused
+// set, one the host hangs up on as soon as it has read the hello.
 type fakeConn struct {
-	done   chan struct{}
-	closed bool
-	sent   []proto.Input
-	mu     sync.Mutex
+	done    chan struct{}
+	closed  bool
+	sent    []proto.Input
+	mu      sync.Mutex
+	refused error
 }
 
 func newFakeConn() *fakeConn { return &fakeConn{done: make(chan struct{})} }
 func (c *fakeConn) Run(ctx context.Context, _ func(*tile.Frame, []tile.Rect), _ func(uint64, byte)) error {
+	if c.refused != nil {
+		return c.refused
+	}
 	select {
 	case <-c.done:
 	case <-ctx.Done():
@@ -204,6 +209,7 @@ type fakeConnector struct {
 	forgot    []string
 	passwords []string
 	block     chan struct{} // if set, Probe waits for it to be closed
+	refuse    error         // if set, the host refuses each connection after the hello with this
 }
 
 func newFakeConnector() *fakeConnector {
@@ -247,6 +253,7 @@ func (c *fakeConnector) Dial(_ context.Context, addr, password string) (Conn, er
 		return nil, c.dialErr
 	}
 	cn := newFakeConn()
+	cn.refused = c.refuse
 	c.conns = append(c.conns, cn)
 	return cn, nil
 }

@@ -89,6 +89,7 @@ type App struct {
 	// state of the pages
 	quickAddr, quickPw string
 	hostPw             string
+	revealed           map[kit.ID]bool // password fields showing what was typed
 	devQuery           string
 	devSort            SortMode
 	logJump            bool // the next time the log is shown, scroll to its end
@@ -116,7 +117,7 @@ func New(cfg Config, fonts Fonts) *App {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	a := &App{cfg: cfg, fonts: fonts, scale: 1, devSort: SortRecent, reconnectWaits: defaultReconnectWaits}
+	a := &App{cfg: cfg, fonts: fonts, scale: 1, devSort: SortRecent, reconnectWaits: defaultReconnectWaits, revealed: map[kit.ID]bool{}}
 	var base [8]byte
 	for i := range base {
 		base[i] = byte(rand.Uint32())

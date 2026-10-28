@@ -120,6 +120,10 @@ const (
 	KeySessFailedTitle
 	KeySessEndedTitle
 	KeySessForgetIdentity
+	KeySessPwAgain
+	KeySessPwHint
+	KeyShowPw
+	KeyHidePw
 	KeySessForgotIdentity
 	KeySessForgetFailed
 	KeySessNewTab

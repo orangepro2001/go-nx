@@ -93,15 +93,24 @@ func (a *App) errorCard(t *tab) kit.Node {
 		buttons.Children = append(buttons.Children, &kit.Button{ID: "sess.forget", Label: tr.T(i18n.KeySessForgetIdentity), Kind: kit.Danger, OnClick: func() { a.forgetIdentity(t) }})
 	}
 	a.wantFocus = "sess.retry"
-	return a.card("", p.Bad,
+	kids := []kit.Node{
 		&kit.Row{Gap: theme.S3, Align: kit.AlignCenter, Children: []kit.Node{
 			&kit.IconNode{Icon: kit.IconUnplug, Color: p.Bad},
 			kit.Grow(1, &kit.Label{Text: title, Size: theme.SizeSub, Weight: text.Semibold, Color: p.Bad}),
 		}},
 		&kit.Label{Text: t.err, Wrap: true},
 		a.caption(t.addr),
-		buttons,
-	)
+	}
+	if t.askPw {
+		// The host refused what was sent: take another here, so Retry (or Enter) sends it.
+		id := kit.ID("sess.pw." + itoa(t.serial))
+		kids = append(kids,
+			a.labelled(tr.T(i18n.KeySessPwAgain), a.secretField(&kit.TextField{ID: id, Value: &t.password, MaxLen: 64, OnSubmit: func() { a.startDial(t) }})),
+			a.caption(tr.T(i18n.KeySessPwHint)),
+		)
+		a.wantFocus = id
+	}
+	return a.card("", p.Bad, append(kids, buttons)...)
 }
 
 // forgetIdentity drops the saved identity of a host that presented a different one, which

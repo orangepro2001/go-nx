@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Verdict is the host's decision about a connecting viewer.
@@ -194,11 +197,62 @@ func (p *Policy) openLocked(password string) (v Verdict, pair bool) {
 	case pairing && p.pairCode == "":
 		p.closePairingLocked() // one device per pairing
 		return Allowed, true
-	case pairing && password != "" && subtle.ConstantTimeCompare([]byte(password), []byte(p.pairCode)) == 1:
+	case pairing && password != "" && codeMatches(password, p.pairCode):
 		p.closePairingLocked()
 		return Allowed, true
 	}
 	return AllowedOpen, false
+}
+
+// codeMatches reports whether offered is the pairing code as a person types it.
+func codeMatches(offered, code string) bool {
+	return subtle.ConstantTimeCompare([]byte(asCode(offered)), []byte(code)) == 1
+}
+
+// asCode reads s as a pairing code is typed: the host shows "123 456", so spaces and
+// dashes between the digits do not count, and full-width digits from an input method are
+// the same digits.
+func asCode(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case unicode.IsSpace(r) || r == '-':
+		case r >= '０' && r <= '９':
+			b.WriteRune('0' + r - '０')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// Explain says, for the log, what a refused viewer offered and what the host would have
+// taken, without either secret: enough to tell a code that had expired from a mistyped
+// one, or a code from a password.
+func (p *Policy) Explain(password string) string {
+	offered := "nothing offered"
+	if c := asCode(password); len(c) == 6 && strings.Trim(c, "0123456789") == "" {
+		offered = "offered a 6-digit code"
+	} else if n := utf8.RuneCountInString(password); n > 0 {
+		offered = fmt.Sprintf("offered a password, length %d", n)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.now()
+	pairing := "pairing not open"
+	switch {
+	case now.Before(p.pairUntil) && p.pairCode != "":
+		pairing = fmt.Sprintf("pairing open, %s left", p.pairUntil.Sub(now).Round(time.Second))
+	case now.Before(p.pairUntil):
+		pairing = "pairing open without a code"
+	case !p.pairUntil.IsZero():
+		pairing = fmt.Sprintf("pairing ran out %s ago", now.Sub(p.pairUntil).Round(time.Second))
+	}
+	host := "no host password"
+	if p.password != "" {
+		host = "host password set"
+	}
+	return offered + "; " + pairing + "; " + host
 }
 
 // decideLocked handles a device that is not paired. pair is true when the device
@@ -219,7 +273,7 @@ func (p *Policy) decideLocked(addr, password string) (v Verdict, pair bool) {
 	if src != nil && now.Before(src.lockedUntil) {
 		return Locked, false
 	}
-	if coded && subtle.ConstantTimeCompare([]byte(password), []byte(p.pairCode)) == 1 {
+	if coded && codeMatches(password, p.pairCode) {
 		p.closePairingLocked()
 		delete(p.sources, key)
 		return Allowed, true

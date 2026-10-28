@@ -11,6 +11,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
+	"github.com/orangepro2001/go-nx/internal/remote"
 	"github.com/orangepro2001/go-nx/internal/ui/i18n"
 )
 
@@ -36,6 +37,7 @@ type tab struct {
 	state       tabState
 	err         string // why the tab is in the error state, in the language of the interface
 	hostChanged bool   // the error is a changed host identity, which can be forgotten
+	askPw       bool   // the host refused the password or code sent: the error card asks for another
 	sess        *session
 	dial        chan connResult
 
@@ -128,7 +130,7 @@ func (a *App) openTab(title, addr, password, profile string) {
 }
 
 func (a *App) startDial(t *tab) {
-	t.state, t.err, t.hostChanged = tabConnecting, "", false
+	t.state, t.err, t.hostChanged, t.askPw = tabConnecting, "", false, false
 	t.dial = make(chan connResult, 1)
 	t.confirmReq, t.confirm, t.cancel = make(chan *hostConfirm, 1), nil, make(chan struct{})
 	go a.dialTab(t.addr, t.password, t.dial, t.confirmReq, t.cancel)
@@ -241,6 +243,7 @@ func (a *App) pollTab(i int, t *tab) {
 			if r.err != nil {
 				t.state = tabError
 				t.err, t.hostChanged = describe(a.tr, r.err)
+				a.askAgain(t, r.err)
 				return
 			}
 			t.sess = newSession(r.conn, &a.nextOp, a.Invalidate)
@@ -263,6 +266,7 @@ func (a *App) pollTab(i int, t *tab) {
 				a.startReconnect(t)
 			} else {
 				t.state, t.sess = tabError, nil
+				a.askAgain(t, err)
 			}
 		default:
 		}
@@ -285,9 +289,20 @@ func (a *App) pollTab(i int, t *tab) {
 				reason, changed := describe(a.tr, r.err)
 				t.err, t.hostChanged = reason, changed
 				t.state, t.sess, t.old = tabError, nil, nil
+				a.askAgain(t, r.err)
 			}
 		default:
 		}
+	}
+}
+
+// askAgain makes a failed tab ask for a new password when the host refused the one it sent:
+// Retry alone would only send the same one again. A password the host called wrong is
+// cleared, so the next one is typed afresh instead of being added to it.
+func (a *App) askAgain(t *tab, err error) {
+	t.askPw = refusedAuth(err)
+	if t.askPw && refusedCode(err) == remote.CloseBadPassword {
+		t.password = ""
 	}
 }
 

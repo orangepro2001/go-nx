@@ -160,6 +160,11 @@ var previewScenes = []previewScene{
 		p.App.tabs[0].cancel = make(chan struct{})
 		p.App.serial, p.App.active = 2, 2
 	}},
+	{"error-refused", func(p *Preview) {
+		p.App.tabs = []*tab{{serial: 1, title: "Office", addr: "100.109.77.29:7000", state: tabError, askPw: true,
+			err: p.App.tr.T(keyErrDisconnected, "reason", p.App.tr.T(i18n.KeyErrBadPassword))}}
+		p.App.serial, p.App.active = 1, 1
+	}},
 	{"dialog-open-mode", func(p *Preview) { p.App.page = PageThisPC; p.App.setStrict(false) }},
 	{"update-ready", func(p *Preview) {
 		p.upd.st = update.Status{State: update.Ready, Version: "0.12.3", Mandatory: true}
