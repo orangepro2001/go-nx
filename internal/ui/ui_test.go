@@ -65,6 +65,7 @@ func TestHomeHit(t *testing.T) {
 		{"first row delete", listX + listW - 10, listTop + 5, Hit{HitDelete, 3}},
 		{"second row", listX + 20, listTop + rowH + 5, Hit{HitProfile, 4}},
 		{"view logs", LogsRect().X + 5, LogsRect().Y + 5, Hit{Kind: HitLogs}},
+		{"check for updates", UpdateRect().X + 5, UpdateRect().Y + 5, Hit{Kind: HitUpdate}},
 		{"nothing", 5, 5, Hit{}},
 	}
 	for _, c := range cases {
@@ -140,6 +141,29 @@ func TestSpacedCode(t *testing.T) {
 	for in, want := range map[string]string{"123456": "123 456", "000007": "000 007", "": "", "12345": "12345"} {
 		if got := SpacedCode(in); got != want {
 			t.Errorf("SpacedCode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The update button sits in the right-hand column, above the saved connections.
+func TestUpdateButtonDoesNotCoverAnythingElse(t *testing.T) {
+	u := UpdateRect()
+	if u.X < 0 || u.X+u.W > HomeW || u.Y < 0 || u.Y+u.H > listTop {
+		t.Fatalf("update button %+v is outside the strip above the list (HomeW %d, list top %d)", u, HomeW, listTop)
+	}
+	overlaps := func(a, b Rect) bool { return a.X < b.X+b.W && b.X < a.X+a.W && a.Y < b.Y+b.H && b.Y < a.Y+a.H }
+	for row := 0; row < VisibleRows(); row++ {
+		if overlaps(u, RowRect(row)) {
+			t.Errorf("update button overlaps saved-connection row %d", row)
+		}
+	}
+	if overlaps(u, LogsRect()) {
+		t.Error("update button overlaps the View logs button")
+	}
+	// It must not shadow the controls on the left either.
+	for i := 0; i < NumFields; i++ {
+		if overlaps(u, FieldRect(i)) {
+			t.Errorf("update button overlaps field %d", i)
 		}
 	}
 }

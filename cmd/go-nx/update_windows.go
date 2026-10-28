@@ -64,6 +64,33 @@ func updateLabel() string {
 	return updater.Status().Label()
 }
 
+// homeUpdate is what the home tab's update button shows: its text, and whether a
+// verified update is waiting. armed means the user already clicked once on a
+// ready update, which restarts go-nx and so ends every remote session.
+func homeUpdate(armed bool) (label string, ready bool) {
+	if updater == nil {
+		return "", false
+	}
+	st := updater.Status()
+	ready = st.State == update.Ready
+	if ready && armed {
+		return "Click again to restart now", true
+	}
+	return st.Label(), ready
+}
+
+// updateProblem is why the last update check failed, for the home tab's message
+// line; empty when nothing is wrong.
+func updateProblem() string {
+	if updater == nil {
+		return ""
+	}
+	if st := updater.Status(); st.State == update.Failed && st.Err != nil {
+		return "Update check failed: " + st.Err.Error()
+	}
+	return ""
+}
+
 // updateClicked installs a ready update and restarts into it; otherwise it asks
 // for a check right away. Restarting ends every remote session, which is why it
 // only ever happens on a click.

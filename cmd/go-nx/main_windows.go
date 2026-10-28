@@ -67,6 +67,7 @@ type app struct {
 	scroll      int    // first visible saved connection
 	delArmed    int    // saved connection waiting for a second click to delete, or -1
 	forgetArmed bool   // "forget paired devices" waiting for a second click
+	updateArmed bool   // a ready update waiting for a second click, since installing it restarts go-nx
 	message     string // last note or error, shown on the home tab
 
 	renaming     int // tab-bar index being renamed, 0 for none
@@ -449,6 +450,8 @@ func (a *app) updateHome() {
 		a.delArmed = -1
 		forgetArmed := a.forgetArmed
 		a.forgetArmed = false
+		updateArmed := a.updateArmed
+		a.updateArmed = false
 		hit := ui.HomeHit(cx, hy, len(a.profiles.Items), a.scroll)
 		switch hit.Kind {
 		case ui.HitCheckbox:
@@ -457,6 +460,16 @@ func (a *app) updateHome() {
 			a.host.startPairing()
 		case ui.HitQuit:
 			quitApp()
+		case ui.HitUpdate:
+			switch {
+			case updater == nil:
+				a.message = "This build does not check for updates (a dev build, or started with -no-update)"
+			case updater.Status().State == update.Ready && !updateArmed:
+				a.updateArmed = true // restarting ends every remote session, so ask once more
+			default:
+				a.message = ""
+				updateClicked()
+			}
 		case ui.HitForget:
 			switch {
 			case a.host.trustedCount() == 0:
@@ -555,9 +568,15 @@ func (a *app) saveForm() {
 }
 
 func (a *app) homeData() *ui.HomeData {
+	label, ready := homeUpdate(a.updateArmed)
+	msg := a.message
+	if msg == "" {
+		msg = updateProblem()
+	}
 	return &ui.HomeData{
 		Host: a.host.info(), Fields: a.fields, Focus: a.focus, Profiles: a.profiles.Items,
-		Scroll: a.scroll, DelArmed: a.delArmed, ForgetArmed: a.forgetArmed, Message: a.message,
+		Scroll: a.scroll, DelArmed: a.delArmed, ForgetArmed: a.forgetArmed, Message: msg,
+		Version: versionLabel(), UpdateLabel: label, UpdateReady: ready,
 		Caret: time.Now().UnixMilli()/500%2 == 0,
 	}
 }

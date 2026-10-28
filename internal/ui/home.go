@@ -68,6 +68,12 @@ func FieldRect(i int) Rect { return Rect{fieldX, fieldY[i], fieldW, fieldH} }
 // RowRect is the clickable area of saved connection row (0 = first visible).
 func RowRect(row int) Rect { return Rect{listX, listTop + row*rowH, listW, rowH - 4} }
 
+// updateW is the width of the update button, wide enough for "Restart to update to v0.10.12 (required)".
+const updateW = 300
+
+// UpdateRect is the home tab's update button, top right above the saved connections.
+func UpdateRect() Rect { return Rect{HomeW - 30 - updateW, 10, updateW, 34} }
+
 // LogsRect is the home tab's log-viewer button.
 func LogsRect() Rect { return Rect{HomeW - 150, 650, 120, 36} }
 
@@ -95,6 +101,7 @@ const (
 	HitProfile // Index: profile index (scroll already applied)
 	HitDelete  // Index: profile index
 	HitLogs
+	HitUpdate // check for an update, or restart into one that is ready
 )
 
 type Hit struct {
@@ -106,6 +113,9 @@ type Hit struct {
 func HomeHit(x, y, nProfiles, scroll int) Hit {
 	if LogsRect().Contains(x, y) {
 		return Hit{Kind: HitLogs}
+	}
+	if UpdateRect().Contains(x, y) {
+		return Hit{Kind: HitUpdate}
 	}
 	switch {
 	case Rect{leftX, chkY, 640, fieldH}.Contains(x, y):
@@ -165,8 +175,11 @@ type HomeData struct {
 	Focus       int
 	Profiles    []profiles.Profile
 	Scroll      int
-	DelArmed    int  // profile index awaiting a second click to delete, or -1
-	ForgetArmed bool // "forget paired devices" awaiting a second click
+	DelArmed    int    // profile index awaiting a second click to delete, or -1
+	ForgetArmed bool   // "forget paired devices" awaiting a second click
+	Version     string // this build, e.g. "v0.2.0"
+	UpdateLabel string // text of the update button; "" when this build has no updater
+	UpdateReady bool   // a verified update is waiting, so the button is highlighted
 	Message     string
 	Caret       bool
 }
@@ -176,6 +189,17 @@ func DrawHome(dst *ebiten.Image, face *text.GoTextFace, d *HomeData, oy int) {
 	t := func(s string, x, y int, c color.Color) { Text(dst, face, s, x, oy+y, c) }
 	h := d.Host
 	t("This PC (others can control it)", leftX, 20, ColText)
+	if d.Version != "" {
+		t(d.Version, leftX+int(Width(face, "This PC (others can control it)"))+24, 20, ColDim)
+	}
+	if d.UpdateLabel != "" {
+		u, bg := UpdateRect(), ColBox
+		if d.UpdateReady {
+			bg = ColHot
+		}
+		Fill(dst, u.X, oy+u.Y, u.W, u.H, bg)
+		t(Truncate(face, d.UpdateLabel, float64(u.W-24)), u.X+12, u.Y+3, ColText)
+	}
 	if h.Err != "" {
 		for i, line := range Wrap(face, "Hosting unavailable: "+h.Err, 630) {
 			if i == 3 {
