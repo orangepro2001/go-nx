@@ -12,7 +12,20 @@ VERSION ──build.sh──▶ build/go-nx.exe (main.version 已注入)
    https://tony-ai-pc-1.tail9f7f1f.ts.net/release   ◀── go-nx 托盘：检查 → 下载 → 校验 → 重启
 ```
 
-## 发布一个新版本
+## 每次改动发布一个新版本（推荐）
+
+约定（用户 2026-10-28 明确）：**每完成一项改变程序行为的改动，就发布一个新版本**；只改文档、CI、测试的提交不发（exe 没变，发了只是噪音）。
+改动先照常提交并推送，然后在干净的工作区执行：
+
+```sh
+scripts/ship.sh --bump patch "这次改了什么"      # 修复用 patch；功能或行为变化用 minor
+scripts/ship.sh --dry-run "..."                  # 只看会升到哪个版本、线上最新是多少，不改任何东西
+```
+
+`ship.sh` 依次：预检（在 `main`、工作区干净、不落后于远端、新 versionCode 大于线上已发布的最大值）→ 升 `VERSION` 并提交 `Release X.Y.Z` → 推送 → **等这个提交的 CI 通过**（失败或 15 分钟没结束就不发布）→ `release.sh` 构建并发布 → 用 `relhub check` 验证旧版本被提供新版、新版本是最新。
+发布只是把新版本放到线上；已安装的 go-nx 只有在用户点了 `Restart to update to vX` 之后才会换成新版，不会自动重启。
+
+## 手动发布一个新版本
 
 1. 改 `VERSION`（`MAJOR.MINOR.PATCH`，minor 和 patch 都必须小于 100）。
 2. 提交代码。`release.sh` 默认拒绝在不干净的工作区发布，保证发布的 exe 对应一个提交（`ALLOW_DIRTY=1` 可跳过）。
@@ -31,9 +44,15 @@ VERSION ──build.sh──▶ build/go-nx.exe (main.version 已注入)
 `relhub channel min -app go-nx -platform win-x64 -channel stable -min <versionCode>`，或发布时加 `-force`。
 低于该值的客户端托盘会显示 `Restart to update to vX (required)`。注意：go-nx 仍然**不会**自动重启，因为重启会断开正在进行的远控会话。
 
+## 在哪里找更新入口
+
+- **窗口主页右上角**：版本号显示在标题旁，右上角是按钮，文字随状态变化：`Check for updates` → `Checking for updates...` → `Downloading vX (n%)...` → `Up to date - check again` / `Update check failed - retry` / `Restart to update to vX`。有新版本待安装时按钮高亮，第一次点击变成 `Click again to restart now`，第二次才安装并重启。（0.2.0 起；0.1.0 的窗口里没有这个按钮。）
+- **系统托盘右键菜单**：顶部灰色的 `go-nx vX.Y.Z`，下面是同样文字的更新项。Windows 11 常把托盘图标收在右下角 `^` 溢出区里。
+- `dev` 构建（没经过 `build.sh`）和 `-no-update` 没有更新入口：托盘没有更新项，主页没有按钮，点原位置会提示原因。
+
 ## 客户端行为（`internal/update`、`cmd/go-nx/update_windows.go`）
 
-- 启动 30 秒后检查一次，之后每 6 小时一次；托盘菜单可立即检查。用周期性 `Check`，不保持长连接。
+- 启动 30 秒后检查一次，之后每 6 小时一次；托盘菜单或主页按钮可立即检查。用周期性 `Check`，不保持长连接。
 - 只信任**签名后的 manifest**：是否有新版、是否强制，都由客户端根据签名内容本地重算；下载后校验大小和 SHA-256，不符则丢弃。
 - 下载到 `go-nx.exe.new`（与 exe 同目录，保证同卷改名），支持断点续传。
 - 用户点击托盘的 `Restart to update to vX` 后：`go-nx.exe → go-nx.exe.old`，`.new → go-nx.exe`（第二步失败会回滚第一步），再用 `-restarted` 启动新进程并退出旧进程。下次启动时清理 `.old`。

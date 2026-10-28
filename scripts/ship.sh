@@ -48,7 +48,8 @@ esac
 next="$major.$minor.$patch"
 code=$((major * 10000 + minor * 100 + patch))
 
-latest=$(relhub check -app "$APP" -platform "$PLATFORM" -code 99999999 2>&1 | sed -nE 's/.*\(([0-9]+)\).*/\1/p' | head -1 || true)
+# The highest versionCode ever published for this platform, yanked or not: a code is never reused.
+latest=$(relhub list -app "$APP" | awk -v p="$PLATFORM" '$1 == p && $4 ~ /^[0-9]+$/ { if ($4 > m) m = $4 } END { print m }')
 if [[ -n $latest ]] && (( code <= latest )); then
 	echo "version $next (code $code) is not newer than the published one (code $latest); bump further or fix VERSION" >&2
 	exit 1

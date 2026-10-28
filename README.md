@@ -5,7 +5,7 @@ Windows 10/11 之间的轻量局域网远程查看与操作。纯 Go，无 cgo�
 - 传输：QUIC（`quic-go`）+ TLS 1.3，自签证书，客户端 TOFU 固定主机指纹
 - 画面：GDI `BitBlt` 抓主屏，64×64 tile 差分，无损编码，默认 10 fps（设计目标是静止时码率接近 0，**尚未测量**）
 - 界面：Ebiten 窗口 + 系统托盘，关闭窗口只是藏进托盘
-- 更新：托盘里的应用内自更新（经本机 release-publish，签名校验），见 [`docs/release.md`](docs/release.md)
+- 更新：应用内自更新（经本机 release-publish，签名校验）。入口在窗口主页右上角的按钮和系统托盘菜单；只在你点击后才替换并重启。每次改动的发布流程见 [`docs/release.md`](docs/release.md)
 
 ## 现状与限制（请先读）
 
