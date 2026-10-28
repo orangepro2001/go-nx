@@ -31,7 +31,20 @@ var (
 
 type loop struct{}
 
-func (loop) Update() error { return nil }
+// stop is closed when the tests are over: the loop then ends by itself, so that the process
+// exits from the main thread after Ebiten has torn its window down. (Exiting from the test
+// goroutine while the main thread was inside the GL driver crashed Mesa's software renderer
+// about one run in eight, after every test had passed.)
+var stop = make(chan struct{})
+
+func (loop) Update() error {
+	select {
+	case <-stop:
+		return ebiten.Termination
+	default:
+		return nil
+	}
+}
 func (loop) Draw(screen *ebiten.Image) {
 	for {
 		select {
@@ -49,12 +62,19 @@ func TestMain(m *testing.M) {
 		haveGPU = false
 		os.Exit(m.Run())
 	}
-	go func() { os.Exit(m.Run()) }()
+	codes := make(chan int, 1)
+	go func() {
+		codes <- m.Run()
+		close(stop)
+	}()
 	ebiten.SetWindowSize(320, 240)
-	if err := ebiten.RunGame(loop{}); err != nil {
+	err := ebiten.RunGame(loop{})
+	code := <-codes
+	if err != nil {
 		os.Stderr.WriteString("ebiten: " + err.Error() + "\n")
-		os.Exit(3)
+		code = max(code, 3)
 	}
+	os.Exit(code)
 }
 
 // gpu runs f in the game loop, with the screen, and waits for it.
@@ -109,7 +129,12 @@ func inkIn(img *ebiten.Image, r image.Rectangle) int {
 
 func newEngine(t *testing.T, lang i18n.Lang) *text.Engine {
 	t.Helper()
-	e, err := text.NewEngine(text.SystemLocator(), func(f string, a ...any) { t.Logf(f, a...) })
+	if !haveGPU {
+		t.Skip("no display: run under xvfb-run")
+	}
+	// No logger: the engine opens fonts in the background and may report one after the test
+	// has finished, which the testing package turns into a panic.
+	e, err := text.NewEngine(text.SystemLocator(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,14 +330,15 @@ func TestKitPaintsThroughTheRealCanvas(t *testing.T) {
 		// The primary button is the accent colour wherever the label is not, and the
 		// label is drawn in the colour for text on an accent.
 		pal := darkPalette()
-		for _, pt := range [][2]int{{140, 40}, {120, 30}, {120, 50}} {
+		// (away from the label, whose width depends on the font the machine has)
+		for _, pt := range [][2]int{{90, 26}, {150, 26}, {90, 54}, {150, 54}} {
 			p := pixel(img, pt[0], pt[1])
 			if p.A != 255 || p.R != pal.Accent.R || p.G != pal.Accent.G || p.B != pal.Accent.B {
 				t.Errorf("pixel %v = %v, want the accent %v", pt, p, pal.Accent)
 			}
 		}
-		if n := inkIn(img, image.Rect(90, 30, 150, 52)); n < 100 {
-			t.Errorf("%d pixels in the button's middle", n)
+		if n := inkIn(img, image.Rect(60, 26, 180, 54)); n < 100 {
+			t.Errorf("%d inked pixels in the button's middle", n)
 		}
 	})
 }

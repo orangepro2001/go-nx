@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"math"
 	"testing"
+	"time"
 )
 
 func TestFitKeepsTheAspectRatioAndCentres(t *testing.T) {
@@ -222,5 +223,92 @@ func TestBGRAToRGBAOfAWholeSyntheticPicture(t *testing.T) {
 				t.Fatalf("pixel %d,%d = %v", x, y, dst[o:o+4])
 			}
 		}
+	}
+}
+
+func TestPlaceFitCentresAndActualPans(t *testing.T) {
+	// Fit is the old Fit.
+	if p := Place(ModeFit, 800, 600, 1600, 900, 0, 0); p.Scale != 0.5 || p.OX != 0 || p.OY != 75 {
+		t.Errorf("fit = %+v", p)
+	}
+	// Actual: smaller than the viewport on an axis is centred, whatever the pan.
+	if p := Place(ModeActual, 800, 600, 400, 300, 50, 50); p != (Placement{1, 200, 150}) {
+		t.Errorf("small picture = %+v", p)
+	}
+	// Larger: shifted by the pan, held to the picture's edges.
+	if p := Place(ModeActual, 800, 600, 1920, 1080, 100, 30); p != (Placement{1, -100, -30}) {
+		t.Errorf("panned = %+v", p)
+	}
+	if p := Place(ModeActual, 800, 600, 1920, 1080, 5000, -5); p != (Placement{1, -1120, 0}) {
+		t.Errorf("pan held to the edges = %+v", p)
+	}
+	// One axis fits, the other does not.
+	if p := Place(ModeActual, 800, 600, 700, 1080, 40, 100); p != (Placement{1, 50, -100}) {
+		t.Errorf("mixed = %+v", p)
+	}
+	if x, y := MaxPan(800, 600, 1920, 1080); x != 1120 || y != 480 {
+		t.Errorf("MaxPan = %v, %v", x, y)
+	}
+	if x, y := MaxPan(800, 600, 700, 500); x != 0 || y != 0 {
+		t.Errorf("MaxPan of a picture that fits = %v, %v", x, y)
+	}
+}
+
+// The mapping back to the host's pixel is the inverse of where the picture was drawn.
+func TestToHostAtInvertsPlace(t *testing.T) {
+	for _, mode := range []Mode{ModeFit, ModeActual} {
+		for _, c := range []struct{ vw, vh, fw, fh int }{{800, 600, 1920, 1080}, {1000, 700, 640, 480}, {500, 500, 3000, 2000}} {
+			for _, pan := range []float64{0, 137} {
+				p := Place(mode, c.vw, c.vh, c.fw, c.fh, pan, pan/2)
+				for _, hx := range []int{0, 1, c.fw / 3, c.fw - 2, c.fw - 1} {
+					for _, hy := range []int{0, c.fh / 2, c.fh - 1} {
+						// The centre of the host pixel, as drawn.
+						sx, sy := p.OX+(float64(hx)+0.5)*p.Scale, p.OY+(float64(hy)+0.5)*p.Scale
+						if sx < 0 || sy < 0 || sx >= float64(c.vw) || sy >= float64(c.vh) {
+							continue // panned out of view: not on the screen to be pointed at
+						}
+						gx, gy := p.ToHostAt(sx, sy, c.fw, c.fh)
+						if int(gx) != hx || int(gy) != hy {
+							t.Errorf("mode %d %+v pan %v: host pixel (%d,%d) drawn at (%.1f,%.1f) maps back to (%d,%d)", mode, c, pan, hx, hy, sx, sy, gx, gy)
+						}
+					}
+				}
+			}
+		}
+	}
+	// Outside the frame it is held to the edge, so a drag that leaves the window still ends there.
+	p := Place(ModeFit, 800, 600, 1600, 900, 0, 0)
+	if x, y := p.ToHostAt(-50, 9999, 1600, 900); x != 0 || y != 899 {
+		t.Errorf("clamped = %d, %d", x, y)
+	}
+}
+
+func TestEdgePan(t *testing.T) {
+	dt := 100 * time.Millisecond
+	// In the middle: nothing.
+	if dx, dy := EdgePan(400, 300, 800, 600, 40, 1000, dt, true, true); dx != 0 || dy != 0 {
+		t.Errorf("middle = %v, %v", dx, dy)
+	}
+	// At the left edge: full speed to the left; halfway through the margin: half.
+	if dx, _ := EdgePan(0, 300, 800, 600, 40, 1000, dt, true, true); dx != -100 {
+		t.Errorf("left edge dx = %v, want -100", dx)
+	}
+	if dx, _ := EdgePan(20, 300, 800, 600, 40, 1000, dt, true, true); dx != -50 {
+		t.Errorf("half way into the margin dx = %v, want -50", dx)
+	}
+	if _, dy := EdgePan(400, 600, 800, 600, 40, 1000, dt, true, true); dy != 100 {
+		t.Errorf("bottom edge dy = %v, want 100", dy)
+	}
+	// An axis the picture does not extend past is not panned.
+	if dx, dy := EdgePan(0, 600, 800, 600, 40, 1000, dt, false, true); dx != 0 || dy != 100 {
+		t.Errorf("only y = %v, %v", dx, dy)
+	}
+	// A pointer outside the viewport is held to full speed, not beyond it.
+	if dx, _ := EdgePan(-500, 300, 800, 600, 40, 1000, dt, true, true); dx != -100 {
+		t.Errorf("far outside dx = %v", dx)
+	}
+	// No time, no pan.
+	if dx, dy := EdgePan(0, 0, 800, 600, 40, 1000, 0, true, true); dx != 0 || dy != 0 {
+		t.Errorf("dt 0 = %v, %v", dx, dy)
 	}
 }

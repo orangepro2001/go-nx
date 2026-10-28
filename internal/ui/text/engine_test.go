@@ -116,7 +116,7 @@ func TestOnlyTheInterfaceLanguagesFontIsKeptOpen(t *testing.T) {
 	if !have(Han) || !have(Hangul) {
 		t.Skip("this machine has no CJK fonts to open")
 	}
-	e, _ := NewEngine(loc, func(f string, a ...any) { t.Logf(f, a...) })
+	e, _ := NewEngine(loc, nil) // no logger: a font opens in the background and could report after the test
 	defer e.Close()
 
 	e.SetLanguage(i18n.Chinese)

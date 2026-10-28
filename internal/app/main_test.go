@@ -21,7 +21,20 @@ var (
 
 type gpuLoop struct{}
 
-func (gpuLoop) Update() error { return nil }
+// stopLoop is closed when the tests are over: the loop then ends by itself, so that the
+// process exits from the main thread after Ebiten has torn its window down (exiting from the
+// test goroutine while the main thread was inside the GL driver crashed Mesa's software
+// renderer now and then, after every test had passed).
+var stopLoop = make(chan struct{})
+
+func (gpuLoop) Update() error {
+	select {
+	case <-stopLoop:
+		return ebiten.Termination
+	default:
+		return nil
+	}
+}
 func (gpuLoop) Draw(screen *ebiten.Image) {
 	for {
 		select {
@@ -39,12 +52,19 @@ func TestMain(m *testing.M) {
 		haveGPU = false
 		os.Exit(m.Run())
 	}
-	go func() { os.Exit(m.Run()) }()
+	codes := make(chan int, 1)
+	go func() {
+		codes <- m.Run()
+		close(stopLoop)
+	}()
 	ebiten.SetWindowSize(320, 240)
-	if err := ebiten.RunGame(gpuLoop{}); err != nil {
+	err := ebiten.RunGame(gpuLoop{})
+	code := <-codes
+	if err != nil {
 		os.Stderr.WriteString("ebiten: " + err.Error() + "\n")
-		os.Exit(3)
+		code = max(code, 3)
 	}
+	os.Exit(code)
 }
 
 // onGPU runs f in the game loop and waits for it.

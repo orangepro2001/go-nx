@@ -3,7 +3,10 @@
 // window system, so it can be tested anywhere.
 package view
 
-import "sort"
+import (
+	"sort"
+	"time"
+)
 
 // Fit returns the scale and offset that show a fw x fh frame centred in a
 // ww x wh area without distorting its aspect ratio. Sizes are physical pixels.
@@ -93,4 +96,73 @@ func BGRAToRGBA(dst, src []byte) {
 	for i := 0; i+3 < len(src) && i+3 < len(dst); i += 4 {
 		dst[i], dst[i+1], dst[i+2], dst[i+3] = src[i+2], src[i+1], src[i], 255
 	}
+}
+
+// Mode is how a remote screen is shown in its window.
+type Mode int
+
+const (
+	// ModeFit scales the picture to fill the window as far as its aspect ratio allows.
+	ModeFit Mode = iota
+	// ModeActual shows it at its own size, one remote pixel to one device pixel, so that
+	// small text is not smeared by scaling. A picture larger than the window is panned.
+	ModeActual
+)
+
+// Placement is where the picture goes in a viewport: its scale, and the offset of its
+// top-left corner from the viewport's.
+type Placement struct{ Scale, OX, OY float64 }
+
+// Place works out where a fw x fh frame goes in a vpW x vpH viewport. In ModeActual the
+// picture is centred if it is smaller than the viewport on an axis, and otherwise
+// shifted by the pan (how far into the picture the viewport's left and top edges are,
+// in device pixels), which is held to what the picture has to give.
+func Place(mode Mode, vpW, vpH, fw, fh int, panX, panY float64) Placement {
+	if mode != ModeActual {
+		s, ox, oy := Fit(vpW, vpH, fw, fh)
+		return Placement{s, ox, oy}
+	}
+	axis := func(vp, f int, pan float64) float64 {
+		if f <= vp {
+			return float64(vp-f) / 2
+		}
+		return -min(max(pan, 0), float64(f-vp))
+	}
+	return Placement{1, axis(vpW, fw, panX), axis(vpH, fh, panY)}
+}
+
+// MaxPan is how far a picture can be panned in ModeActual: the part of it outside the
+// viewport, on each axis, which is zero where it fits.
+func MaxPan(vpW, vpH, fw, fh int) (x, y float64) {
+	return float64(max(fw-vpW, 0)), float64(max(fh-vpH, 0))
+}
+
+// ToHostAt converts a position in the viewport (relative to its top-left corner) to a pixel
+// of the host's screen, for a picture placed as p. The result is clamped to the frame.
+func (p Placement) ToHostAt(x, y float64, fw, fh int) (hx, hy int32) {
+	return int32(min(max(int((x-p.OX)/p.Scale), 0), fw-1)), int32(min(max(int((y-p.OY)/p.Scale), 0), fh-1))
+}
+
+// EdgePan is how far to pan, in device pixels, during dt when the pointer is at (x, y) in a
+// vpW x vpH viewport showing a picture bigger than it: a pointer within margin of an edge
+// moves the picture the other way, faster the nearer the edge, up to speed pixels a second.
+// Only edges the picture extends past are panned, which the caller says with canX, canY.
+func EdgePan(x, y float64, vpW, vpH int, margin, speed float64, dt time.Duration, canX, canY bool) (dx, dy float64) {
+	axis := func(pos float64, size int) float64 {
+		switch {
+		case pos < margin:
+			return -(margin - max(pos, 0)) / margin
+		case pos > float64(size)-margin:
+			return (margin - max(float64(size)-pos, 0)) / margin
+		}
+		return 0
+	}
+	f := speed * dt.Seconds()
+	if canX {
+		dx = axis(x, vpW) * f
+	}
+	if canY {
+		dy = axis(y, vpH) * f
+	}
+	return
 }
