@@ -14,6 +14,7 @@ import (
 	"github.com/orangepro2001/go-nx/internal/proto"
 	"github.com/orangepro2001/go-nx/internal/remote"
 	"github.com/orangepro2001/go-nx/internal/tile"
+	"github.com/orangepro2001/go-nx/internal/ui/gfx"
 	"github.com/orangepro2001/go-nx/internal/view"
 )
 
@@ -390,29 +391,20 @@ func (s *session) releaseKeysLocked() {
 	}
 }
 
-// draw puts the picture in the viewport. dim darkens it (a connection that is being
-// brought back).
-func (s *session) draw(screen *ebiten.Image, vp rect, dim bool) {
+// draw puts the picture in the viewport, resampled with filter by sc. dim darkens it (a
+// connection that is being brought back).
+func (s *session) draw(screen *ebiten.Image, vp rect, dim bool, sc *gfx.Scaler, filter gfx.ScaleFilter) {
 	if s.img == nil {
 		return
 	}
 	pl := view.Place(s.mode, vp.W, vp.H, s.fw, s.fh, s.panX, s.panY)
-	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Scale(pl.Scale, pl.Scale)
-	op.GeoM.Translate(float64(vp.X)+pl.OX, float64(vp.Y)+pl.OY)
-	// Shrinking with nearest-neighbour drops pixel rows and columns and breaks
-	// small text, so only enlarge with it.
-	op.Filter = ebiten.FilterLinear
-	if pl.Scale >= 1 {
-		op.Filter = ebiten.FilterNearest
-	}
+	d := float32(1)
 	if dim {
-		op.ColorScale.Scale(0.45, 0.45, 0.45, 1)
+		d = 0.45
 	}
 	// The picture is clipped to the viewport, which matters when it is shown at its own
 	// size and is bigger than the window (and not to draw over the tab strip).
-	sub := screen.SubImage(image.Rect(vp.X, vp.Y, vp.X+vp.W, vp.Y+vp.H)).(*ebiten.Image)
-	sub.DrawImage(s.img, op)
+	sc.Draw(screen, s.img, float64(vp.X)+pl.OX, float64(vp.Y)+pl.OY, pl.Scale, image.Rect(vp.X, vp.Y, vp.X+vp.W, vp.Y+vp.H), filter, d)
 }
 
 // rect is a rectangle in device pixels.

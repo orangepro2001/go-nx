@@ -231,5 +231,10 @@ const (
 	KeySetListenMoved
 	KeySetListenMissing
 	KeyTailscale
+	KeySetScaling
+	KeyScaleSharp
+	KeyScaleSmooth
+	KeyScalePixel
+	KeySetScalingNote
 	numKeys
 )

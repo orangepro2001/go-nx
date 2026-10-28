@@ -50,7 +50,7 @@ func (a *App) pageSettings() kit.Node {
 	case setNetwork:
 		cards = []kit.Node{a.networkCard()}
 	case setSession:
-		cards = []kit.Node{a.sessionCard2()}
+		cards = []kit.Node{a.sessionCard2(), a.scalingCard()}
 	case setAbout:
 		cards = []kit.Node{a.updatesCard(), a.diagnosticsCard()}
 	default:
@@ -225,6 +225,25 @@ func (a *App) sessionCard2() kit.Node {
 	return a.card(tr.T(i18n.KeySetSession), kit.Color{},
 		toggle("set.reconnect", tr.T(i18n.KeySetAutoReconnect), keyAutoReconnect, a.autoReconnect()),
 		toggle("set.korean", tr.T(i18n.KeySetKoreanKeys), keyKoreanKeys, a.koreanKeys()),
+	)
+}
+
+// scalingCard is how the remote picture is resized to the window.
+func (a *App) scalingCard() kit.Node {
+	tr := a.tr
+	return a.card(tr.T(i18n.KeySetScaling), kit.Color{},
+		&kit.Row{Children: []kit.Node{
+			&kit.Segmented{ID: "set.scaling", Options: []string{tr.T(i18n.KeyScaleSharp), tr.T(i18n.KeyScaleSmooth), tr.T(i18n.KeyScalePixel)},
+				Selected: int(a.scaleFilter()),
+				OnChange: func(i int) {
+					if err := a.cfg.Settings.Set(keyScaling, scalingNames[i]); err != nil {
+						log.Printf("could not save setting: %v", err)
+					}
+					a.ui.Invalidate()
+				}},
+			kit.Spacer(),
+		}},
+		a.caption(tr.T(i18n.KeySetScalingNote)),
 	)
 }
 

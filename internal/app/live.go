@@ -7,6 +7,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
+	"github.com/orangepro2001/go-nx/internal/ui/gfx"
 	"github.com/orangepro2001/go-nx/internal/ui/i18n"
 )
 
@@ -142,8 +143,32 @@ func (a *App) shortcuts(t *tab, s *session) bool {
 // drawLive draws the picture of the tab on show, if there is one.
 func (a *App) drawLive(screen *ebiten.Image) {
 	if _, s, dim := a.pictureTab(); s != nil {
-		s.draw(screen, a.viewportPx(), dim)
+		if a.scaler == nil && !a.scalerFailed {
+			sc, err := gfx.NewScaler()
+			if err != nil {
+				log.Printf("the sharp scaling shader did not compile, so pictures are scaled bilinearly: %v", err)
+			}
+			a.scaler, a.scalerFailed = sc, err != nil
+		}
+		s.draw(screen, a.viewportPx(), dim, a.scaler, a.scaleFilter())
 	}
+}
+
+// Settings key for how the picture is scaled to the window: "sharp" (the default), "smooth"
+// or "pixel".
+const keyScaling = "view_scaling"
+
+var scalingNames = []string{"sharp", "smooth", "pixel"} // in the order of gfx.ScaleFilter
+
+// scaleFilter is the resampling the person chose for the remote picture.
+func (a *App) scaleFilter() gfx.ScaleFilter {
+	v, _ := a.cfg.Settings.Get(keyScaling)
+	for i, n := range scalingNames {
+		if v == n {
+			return gfx.ScaleFilter(i)
+		}
+	}
+	return gfx.ScaleSharp
 }
 
 // Fullscreen reports whether the window should be full screen; the game applies it.

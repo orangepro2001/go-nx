@@ -11,6 +11,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 
 	"github.com/orangepro2001/go-nx/internal/remote"
+	"github.com/orangepro2001/go-nx/internal/ui/gfx"
 	"github.com/orangepro2001/go-nx/internal/ui/i18n"
 	"github.com/orangepro2001/go-nx/internal/ui/kit"
 	"github.com/orangepro2001/go-nx/internal/ui/text"
@@ -95,6 +96,8 @@ type App struct {
 	setSection         int             // the part of the settings page shown: setGeneral...
 	portText           string          // the port typed on the settings page
 	netErr             string          // why the last move of the host failed, "" if it did not
+	scaler             *gfx.Scaler     // draws the remote picture; made on the first picture
+	scalerFailed       bool            // its shader did not compile: pictures are scaled bilinearly
 	devQuery           string
 	devSort            SortMode
 	logJump            bool // the next time the log is shown, scroll to its end

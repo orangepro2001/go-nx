@@ -233,4 +233,9 @@ var table = [numKeys]entry{
 	KeySetListenMoved:          {"Now listening on {where}.", "现在在 {where} 上等待连接。", "이제 {where}에서 연결을 기다립니다."},
 	KeySetListenMissing:        {"not on this PC now", "当前不在这台电脑上", "지금 이 PC에 없음"},
 	KeyTailscale:               {"Tailscale", "Tailscale", "Tailscale"},
+	KeySetScaling:              {"Picture scaling", "画面缩放", "화면 크기 조정"},
+	KeyScaleSharp:              {"Sharp", "清晰", "선명하게"},
+	KeyScaleSmooth:             {"Smooth", "平滑", "부드럽게"},
+	KeyScalePixel:              {"Pixels", "像素", "픽셀"},
+	KeySetScalingNote:          {"How the other screen is resized to the window. Sharp keeps edges and small text crisp when enlarging and averages when shrinking; Pixels keeps square pixels when enlarging.", "对方屏幕缩放到窗口大小时用的算法。清晰：放大时边缘和小字更锐利，缩小时取平均、不闪烁；像素：放大时保留方块像素。", "상대 화면을 창 크기에 맞출 때 쓰는 방식입니다. 선명하게: 확대할 때 가장자리와 작은 글자가 또렷하고, 축소할 때 평균을 내어 깜빡이지 않습니다. 픽셀: 확대할 때 네모난 픽셀을 그대로 보여 줍니다."},
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/orangepro2001/go-nx/internal/profiles"
 	"github.com/orangepro2001/go-nx/internal/remote"
+	"github.com/orangepro2001/go-nx/internal/ui/gfx"
 	"github.com/orangepro2001/go-nx/internal/ui/i18n"
 	"github.com/orangepro2001/go-nx/internal/ui/kit"
 	"github.com/orangepro2001/go-nx/internal/update"
@@ -908,5 +909,24 @@ func TestThePollNoticesWhatNobodyAnnounces(t *testing.T) {
 	time.Sleep(3 * pollEvery)
 	if r.a.dirty.Load() {
 		t.Error("a log line woke the window although the log is not showing")
+	}
+}
+
+func TestThePictureScalingCanBeChosen(t *testing.T) {
+	r := newRig(t)
+	if r.a.scaleFilter() != gfx.ScaleSharp {
+		t.Fatalf("the default scaling is %v, want sharp", r.a.scaleFilter())
+	}
+	r.a.page, r.a.setSection = PageSettings, setSession
+	r.a.ui.Invalidate()
+	r.step(kit.Input{})
+	if !r.has("Picture scaling") || !r.has("Sharp") {
+		t.Fatalf("session settings: %q", r.texts())
+	}
+	r.a.ui.Focus("set.scaling/a", true)
+	r.key(kit.KeyPress{Key: kit.KeyRight})
+	r.key(kit.KeyPress{Key: kit.KeyRight})
+	if v, _ := r.set.Get(keyScaling); v != "pixel" || r.a.scaleFilter() != gfx.ScalePixel {
+		t.Errorf("scaling saved as %q (%v), want pixel", v, r.a.scaleFilter())
 	}
 }
