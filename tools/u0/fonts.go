@@ -91,7 +91,13 @@ func checkFont(dir string, spec fontSpec) FontResult {
 	}
 	r.Found, r.Bytes = true, st.Size()
 
-	// The way the plan prescribes: hand over the file; keep it open, because the
+	// Read it once and throw the bytes away, so that both ways below are timed with the
+	// file in the operating system's cache and differ only in what the loader does.
+	if warm, err := os.ReadFile(path); err == nil {
+		runtime.KeepAlive(warm)
+	}
+
+	// The way the plan prescribed: hand over the file; keep it open, because the
 	// loader reads from it later.
 	f, err := os.Open(path)
 	if err != nil {
