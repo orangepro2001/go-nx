@@ -30,6 +30,7 @@ import (
 	"go-nx/internal/profiles"
 	"go-nx/internal/trust"
 	"go-nx/internal/ui"
+	"go-nx/internal/update"
 )
 
 const (
@@ -97,10 +98,17 @@ func main() {
 	port := flag.Int("port", 7000, "UDP port to host on")
 	fps := flag.Int("fps", 10, "capture frames per second when hosting")
 	hidden := flag.Bool("hidden", false, "start in the tray without showing the window")
+	updateURL := flag.String("update-url", update.BaseURL, "release server to look for updates on")
+	noUpdate := flag.Bool("no-update", false, "never check for updates")
+	restarted := flag.Bool("restarted", false, "set by the updater: wait for the previous instance to exit")
 	flag.Parse()
 
 	t0 := time.Now()
-	if alreadyRunning() {
+	var wait time.Duration
+	if *restarted {
+		wait = restartWait
+	}
+	if alreadyRunning(wait) {
 		messageBox("go-nx", "go-nx is already running. Look for its icon in the notification area (tray).")
 		return
 	}
@@ -116,6 +124,7 @@ func main() {
 	} else {
 		mark("log opened at " + logPath)
 	}
+	startUpdates(*updateURL, *noUpdate)
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("panic: %v", r)

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -84,10 +85,24 @@ func showMainWindow() {
 }
 
 // alreadyRunning reports whether another go-nx of this user session holds the mutex.
-func alreadyRunning() bool {
+// After an update the previous instance may still be exiting, so wait lets the
+// check keep trying for that long before it concludes the other one is staying.
+func alreadyRunning(wait time.Duration) bool {
 	name, _ := syscall.UTF16PtrFromString(`Local\go-nx-single-instance`)
-	h, _, err := pCreateMutex.Call(0, 0, uintptr(unsafe.Pointer(name)))
-	return h != 0 && err == syscall.Errno(errAlreadyExists)
+	deadline := time.Now().Add(wait)
+	for {
+		h, _, err := pCreateMutex.Call(0, 0, uintptr(unsafe.Pointer(name)))
+		if h == 0 || err != syscall.Errno(errAlreadyExists) {
+			return false // this process now holds the mutex until it exits
+		}
+		// The handle just returned refers to the other process's mutex. Keeping it
+		// would keep the mutex alive after that process exits, so no retry could win.
+		pCloseHandle.Call(h)
+		if !time.Now().Before(deadline) {
+			return true
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func messageBox(title, msg string) {

@@ -24,14 +24,22 @@ func startTray(h *hostState, onOpen func()) {
 		systray.SetIcon(iconICO)
 		systray.SetTitle("go-nx")
 		systray.SetOnTapped(onOpen)
+		systray.AddMenuItem("go-nx "+versionLabel(), "").Disable()
 		open := systray.AddMenuItem("Open go-nx", "Show the window")
 		logs := systray.AddMenuItem("View logs", "Show recent connection and error messages")
 		pair := systray.AddMenuItem("Pair new device", "Let the next device that connects be trusted")
+		// A nil channel never fires, so without an updater the select below ignores it.
+		var upd *systray.MenuItem
+		var updClicks <-chan struct{}
+		if updatesEnabled() {
+			upd = systray.AddMenuItem(updateLabel(), "Look for a newer go-nx, or restart into one that is ready")
+			updClicks = upd.ClickedCh
+		}
 		systray.AddSeparator()
 		quit := systray.AddMenuItem("Quit", "Stop sharing and exit")
 
 		go func() {
-			var lastTip, lastPair string
+			var lastTip, lastPair, lastUpd string
 			for range time.Tick(time.Second) {
 				if tip := h.tooltip(); tip != lastTip {
 					lastTip = tip
@@ -45,6 +53,12 @@ func startTray(h *hostState, onOpen func()) {
 					lastPair = title
 					pair.SetTitle(title)
 				}
+				if upd != nil {
+					if label := updateLabel(); label != lastUpd {
+						lastUpd = label
+						upd.SetTitle(label)
+					}
+				}
 			}
 		}()
 		for {
@@ -56,6 +70,8 @@ func startTray(h *hostState, onOpen func()) {
 				onOpen()
 			case <-pair.ClickedCh:
 				h.startPairing()
+			case <-updClicks:
+				updateClicked()
 			case <-quit.ClickedCh:
 				quitApp()
 			}
