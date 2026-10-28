@@ -76,7 +76,7 @@ func TestUnpremultiplyDrawsOverTheBackground(t *testing.T) {
 func TestHardFailuresNameWhatIsBroken(t *testing.T) {
 	good := Report{
 		Render: &RenderResult{ReadbackOK: true, SDF: SDFResult{Pass: true}, Text: []TextCheck{{Script: "han", Covered: true, Ink: 500, Pass: true}}},
-		Tiles:  &TileResult{TileSubmit: Dist{N: 10, P50: 6}},
+		Tiles:  &TileResult{TileSubmit: Dist{N: 10, P50: 6}, TileSubmitMeanUS: 6},
 		Idle:   &IdleReport{},
 	}
 	if f := hardFailures(good); len(f) != 0 {
@@ -88,7 +88,7 @@ func TestHardFailuresNameWhatIsBroken(t *testing.T) {
 		{Script: "hangul", Covered: false, Ink: 3, Note: "no font"}, // no font: not a failure
 	}}
 	bad.Errors = []string{"idle: exit status 1"}
-	bad.Tiles = &TileResult{TileSubmit: Dist{N: 10, P50: 20000}}
+	bad.Tiles = &TileResult{TileSubmit: Dist{N: 10, P50: 20000}, TileSubmitMeanUS: 20000}
 	got := strings.Join(hardFailures(bad), "\n")
 	for _, want := range []string{"idle: exit status 1", "SDF shader differs", "han text", "64x64 tile took"} {
 		if !strings.Contains(got, want) {

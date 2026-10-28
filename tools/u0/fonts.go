@@ -199,6 +199,6 @@ func (r FontResult) String() string {
 	if !r.Covers {
 		cover = "MISSING " + r.Missing
 	}
-	return fmt.Sprintf("%s %s: %.1f MB, %d face(s), family %q, load %.1f ms, +%d KB heap (%d KB if read whole), %s",
-		r.Role, r.File, float64(r.Bytes)/(1<<20), r.Faces, r.Family, r.LoadMS, r.HeapDeltaKB, r.NaiveHeapDeltaKB, cover)
+	return fmt.Sprintf("%s %s: %.1f MB, %d face(s), family %q; from the file handle: %.0f ms and +%.1f MB heap; read whole first: %.0f ms and +%.1f MB; %s",
+		r.Role, r.File, float64(r.Bytes)/(1<<20), r.Faces, r.Family, r.LoadMS, float64(r.HeapDeltaKB)/1024, r.NaiveLoadMS, float64(r.NaiveHeapDeltaKB)/1024, cover)
 }

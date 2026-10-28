@@ -30,15 +30,22 @@ func dist(d []time.Duration) Dist {
 // screen. "Submit" is how long the call takes; "synced" is the time until the GPU
 // has really taken the pixels (forced by reading one back), per tile or per picture.
 type TileResult struct {
-	GraphicsLibrary string  `json:"graphicsLibrary"`
-	TileSubmit      Dist    `json:"tileSubmit"`     // WritePixels of one 64x64 tile, call only
-	TileSyncedUS    float64 `json:"tileSyncedUs"`   // mean per tile over batches of 100 that end in a readback
-	Full1080Submit  Dist    `json:"full1080Submit"` // WritePixels of a whole 1920x1080 picture
-	Full1080Synced  float64 `json:"full1080SyncedMs"`
-	Full2160Submit  Dist    `json:"full2160Submit"`
-	Full2160Synced  float64 `json:"full2160SyncedMs"`
-	DrawImage       Dist    `json:"drawImage1080"` // screen.DrawImage of the 1080p picture, call only
-	Err             string  `json:"error,omitempty"`
+	GraphicsLibrary string `json:"graphicsLibrary"`
+	// ClockResolutionUS is the smallest step the timer showed. Where it is coarse
+	// (Go on Windows reads a clock that moves every half a millisecond or more) the
+	// per-call distributions below are quantised; the means, which time whole loops,
+	// are not.
+	ClockResolutionUS float64 `json:"clockResolutionUs"`
+	TileSubmitMeanUS  float64 `json:"tileSubmitMeanUs"` // 2000 WritePixels of a 64x64 tile, call only, timed as one loop
+	DrawImageMeanUS   float64 `json:"drawImageMeanUs"`  // 1000 DrawImage of the 1080p picture onto an image, call only
+	TileSubmit        Dist    `json:"tileSubmit"`       // WritePixels of one 64x64 tile, call only
+	TileSyncedUS      float64 `json:"tileSyncedUs"`     // mean per tile over batches of 100 that end in a readback
+	Full1080Submit    Dist    `json:"full1080Submit"`   // WritePixels of a whole 1920x1080 picture
+	Full1080Synced    float64 `json:"full1080SyncedMs"`
+	Full2160Submit    Dist    `json:"full2160Submit"`
+	Full2160Synced    float64 `json:"full2160SyncedMs"`
+	DrawImage         Dist    `json:"drawImage1080"` // screen.DrawImage of the 1080p picture, call only
+	Err               string  `json:"error,omitempty"`
 }
 
 type tilesGame struct {
@@ -97,12 +104,15 @@ func (g *tilesGame) measureUploads() {
 	}
 	sync(big)
 
+	r.ClockResolutionUS = clockResolution()
 	var d []time.Duration
+	loop := time.Now()
 	for i := 0; i < 2000; i++ {
 		t := time.Now()
 		at(i).WritePixels(tile)
 		d = append(d, time.Since(t))
 	}
+	r.TileSubmitMeanUS = float64(time.Since(loop).Nanoseconds()) / 1000 / 2000
 	r.TileSubmit = dist(d)
 
 	const batches, per = 20, 100
@@ -136,6 +146,13 @@ func (g *tilesGame) measureUploads() {
 		}
 		return dist(ds), float64(time.Since(t).Microseconds()) / 1000 / 10
 	}
+	target := ebiten.NewImage(1920, 1080)
+	t = time.Now()
+	for i := 0; i < 1000; i++ {
+		target.DrawImage(big, nil)
+	}
+	r.DrawImageMeanUS = float64(time.Since(t).Nanoseconds()) / 1000 / 1000
+	sync(target)
 	r.Full1080Submit, r.Full1080Synced = full(1920, 1080)
 	r.Full2160Submit, r.Full2160Synced = full(3840, 2160)
 	g.big = big
@@ -148,4 +165,19 @@ func runTiles() (*TileResult, error) {
 		return res, err
 	}
 	return res, nil
+}
+
+// clockResolution is the smallest nonzero step between two readings of the clock, in
+// microseconds.
+func clockResolution() float64 {
+	best := time.Hour
+	for i := 0; i < 20000; i++ {
+		a := time.Now()
+		b := time.Now()
+		for b.Equal(a) {
+			b = time.Now()
+		}
+		best = min(best, b.Sub(a))
+	}
+	return float64(best.Nanoseconds()) / 1000
 }

@@ -34,8 +34,8 @@ func hardFailures(r Report) []string {
 			out = append(out, "tiles: "+r.Tiles.Err)
 		case r.Tiles.TileSubmit.N == 0:
 			out = append(out, "tiles: nothing was measured")
-		case r.Tiles.TileSubmit.P50 > 5000: // 5 ms for a 64x64 tile would be a different world
-			out = append(out, fmt.Sprintf("tiles: a 64x64 tile took %.0f us at the median", r.Tiles.TileSubmit.P50))
+		case r.Tiles.TileSubmitMeanUS > 5000: // 5 ms for a 64x64 tile would be a different world
+			out = append(out, fmt.Sprintf("tiles: a 64x64 tile took %.0f us on average", r.Tiles.TileSubmitMeanUS))
 		}
 	}
 	if r.Idle != nil && r.Idle.Err != "" {
@@ -74,8 +74,8 @@ func summary(r Report) string {
 			verdict, s.Scheduled, s.DrawsAfterEach, s.MedianLatencyMS, s.MaxLatencyMS, s.IdleDrawsPerSec, s.IdleCPUPercent)
 	}
 	if x := r.Tiles; x != nil {
-		fmt.Fprintf(&b, "tiles  %s: 64x64 tile %.1f us p50 / %.1f us p99 (budget 200 us); 1080p picture %.2f ms, 4K %.2f ms; DrawImage of 1080p %.1f us p50\n",
-			x.GraphicsLibrary, x.TileSubmit.P50, x.TileSubmit.P99, x.Full1080Synced, x.Full2160Synced, x.DrawImage.P50)
+		fmt.Fprintf(&b, "tiles  %s: 64x64 tile %.1f us a call (budget 200 us), 1080p picture %.2f ms, 4K %.2f ms, DrawImage of a 1080p picture %.1f us a call; clock step %.1f us%s\n",
+			x.GraphicsLibrary, x.TileSubmitMeanUS, x.Full1080Synced, x.Full2160Synced, x.DrawImageMeanUS, x.ClockResolutionUS, coarse(x.ClockResolutionUS))
 	}
 	if x := r.Input; x != nil {
 		if x.Skipped != "" {
@@ -88,4 +88,11 @@ func summary(r Report) string {
 		fmt.Fprintf(&b, "ERROR  %s\n", e)
 	}
 	return b.String()
+}
+
+func coarse(us float64) string {
+	if us >= 100 {
+		return " (coarse: per-call percentiles are quantised, the means are not)"
+	}
+	return ""
 }
