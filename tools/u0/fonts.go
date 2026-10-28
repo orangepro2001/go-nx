@@ -158,19 +158,25 @@ func checkFont(dir string, spec fontSpec) FontResult {
 	}
 
 	// The control: read all of it, then parse from memory.
+	// Both results are kept alive until the memory has been counted: what a loaded font
+	// costs is what stays, the parsed font and, here, the bytes it was parsed from.
 	heap2, t2 := heapAlloc(), time.Now()
 	data, err := os.ReadFile(path)
+	var kept1 *text.GoTextFaceSource
+	var kept2 []*text.GoTextFaceSource
 	if err == nil {
 		if spec.Collection {
-			_, err = text.NewGoTextFaceSourcesFromCollection(bytes.NewReader(data))
+			kept2, err = text.NewGoTextFaceSourcesFromCollection(bytes.NewReader(data))
 		} else {
-			_, err = text.NewGoTextFaceSource(bytes.NewReader(data))
+			kept1, err = text.NewGoTextFaceSource(bytes.NewReader(data))
 		}
 	}
 	r.NaiveLoadMS = float64(time.Since(t2).Microseconds()) / 1000
 	heap3 := heapAlloc()
 	r.NaiveHeapDeltaKB = (int64(heap3) - int64(heap2)) >> 10
 	runtime.KeepAlive(data)
+	runtime.KeepAlive(kept1)
+	runtime.KeepAlive(kept2)
 	return r
 }
 
