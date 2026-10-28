@@ -1,6 +1,6 @@
 # go-nx 验收状态
 
-- 更新：2026-10-28，阶段 1 完成之后（代码版本仍是 v0.1.0，未发布新版本）
+- 更新：2026-10-28，阶段 0–4 与回移 B0–B5 完成之后（最新发布 0.4.0；其后的改动——异步发送队列、更新器加固、nx-host / mobile 等——已提交，发布另行进行）
 - 原则：只写**实际跑过**的东西。自动化通过 ≠ 真实桌面体验正确；合成测试证明协议与逻辑，不证明真实 GDI / `SendInput` / 物理显示器。
 - "待验证"表示没有证据，不是"大概没问题"。
 
@@ -12,9 +12,13 @@
 | `go vet ./...`、`GOOS=windows go vet ./...` | 通过 | |
 | `go test -race -cover ./...` | 全部通过 | 覆盖率：proto 90.0%、update 89.5%、trust 88.6%、remote 85.9%、tile 83.1%、profiles 81.6%、logging 68.6%、ui 30.8% |
 | 核心包交叉编译 | 通过 | `proto/tile/trust/remote` 在 linux、windows、darwin、`android/arm64` 上能编译 |
-| `scripts/e2e-update.sh` | 通过（上一任务） | 真实 `relhub` + 临时目录 + 回环端口 |
+| `scripts/e2e-update.sh` | 通过（2026-10-28，更新器加固后重跑） | 真实 `relhub` + 临时目录 + 回环端口 |
+| `scripts/e2e-host-probe.py`（真实的 `nx-host` 与 `nx-probe` 两个进程） | 通过（Linux）；CI 的 Linux 与 Windows 两个 job 都跑 | 配对、v1 与 v0 连接、画面标记完好、8 项输入全有回执、错误指纹在握手时被拒、错误码被拒并报 `denied`、状态计数、`stop` 后退出码 0、stdout 每行都是合法事件。**Wine 里跑不了**：quic-go 在 Wine 上监听 UDP 会报 `wsaioctl: winapi error #10045`（Wine 的限制，不是 go-nx 的问题），所以 Windows 版靠 `windows-latest` |
+| `scripts/build-aar.sh --check-api` | 通过（Linux） | 在临时副本里加 `golang.org/x/mobile`、用 `gobind` 生成 Java 绑定、与 `mobile/api.golden` 逐行比较；故意删一行能检出漂移。仓库的 `go.mod` 不变 |
+| 变异检查 | 本任务新增的每个行为都做过 | 故意改坏实现，对应测试确实失败（updater、FPSFn / OnInput / OnFrame、固定指纹、probe、mobile、hostd）；做的过程中还抓到并修了几个真问题，见交接文档 |
+| 反复运行 | `hostd`、`mobile`、`remote` 的关闭相关测试在 `-race -count=10` 下重复多轮通过 | 中途抓到的两个竞态（关闭时确认写入把连接关掉、`EOF` 被当成错误）已修并各有失败在先的测试 |
 
-**没有任何测试**的包：`cmd/go-nx`、`internal/capture`、`internal/inject`、`internal/relhub/*`、`tools/*`。前三个只在 Windows 上编译，Linux 上不会被测。
+**仍没有测试**的包：`cmd/go-nx`（窗口程序，只在 Windows 上编译）、`internal/relhub/*`（release-publish 客户端 SDK 的副本，由 `internal/update` 的测试和 `e2e-update.sh` 间接覆盖）、`tools/*`。`internal/capture`、`internal/inject` 的测试只在 Windows 上编译；CI 的 windows job 在真实桌面上跑它们，Linux 上用 Wine 跑过。
 
 ## 1b. GitHub `windows-latest` 一次性 Windows（CI，2026-10-28 首次运行）
 
@@ -68,6 +72,8 @@
 | H24 | 退出时被控端的按键状态 | 按住 Shift 时从托盘退出控制端 | 被控端 Shift 是否立刻释放（之前最多等 45 s）；强杀进程时约 20 s 内释放 | 待验证（主机看门狗有单元测试） |
 | H25 | Win+L | 控制端按 Win+L | 被控端不应锁屏；查看器状态行应出现一次失败的操作；其他 Win 组合（Win+E）正常 | 待验证（策略有单元测试） |
 | H26 | 被打断的更新可恢复 | 关闭 go-nx；在资源管理器里把 `go-nx.exe` 改名为 `go-nx.exe.old`（模拟两次改名之间被打断）；双击 `go-nx.exe.old` | 它应启动，并在资源管理器里变回 `go-nx.exe`；`go-nx.log` 有 `an earlier update was interrupted; restored ...`；此后更新器正常工作 | 待验证（`Recover` 有单测，真实 Windows 上"进程改自己的名字"由 CI 的 `TestARunningBackupCopyTakesTheRealNameBack` 覆盖） |
+| H27 | AAR 构建与 Android 联调 | 装好 Android SDK/NDK 与 `gomobile` 后 `scripts/build-aar.sh`；集成到手机 App，扫码 / 输入指纹和配对码连接一台主机 | 构建是否成功；画面颜色（应用交换红蓝并置 alpha=255）；触摸移动 / 点击 / 滚动 / 文本；松开按钮时主机指针是否停在原地 | 待验证（本机没有 Android 工具链；Java API 已由 `--check-api` 固定） |
+| H28 ⚠ | `nx-host` 在真实 Windows 桌面上 | `nx-host.exe -listen 127.0.0.1:7000 -pair`，另一个窗口 `nx-probe -addr 127.0.0.1:7000 -fingerprint <ready.identity> -code <pairing.code> -input`。**`-input` 会真的动鼠标、在屏幕中央点击、滚轮、按 A 并输入文字到当前获得焦点的窗口**——先打开一个空记事本 | 画面能收到；`inputs: 8 sent, 8 receipts`；记事本里出现 `go-nx probe 你好`；`nx-host` 退出码 0 | 待验证（`-test-mode` 的完整流程已在 CI 验证；真实 GDI / `SendInput` 在 `nx-host` 里没跑过） |
 
 ## 4. 已知缺陷与风险
 

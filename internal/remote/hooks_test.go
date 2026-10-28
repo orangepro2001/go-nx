@@ -184,3 +184,22 @@ func TestBoostDefaultsAndSafety(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestBoostRateAtFollowsABaseThatChanges(t *testing.T) {
+	clk := newClock()
+	b := &Boost{Active: 40, Hold: time.Second, now: clk.now}
+	if got := b.RateAt(5); got != 5 {
+		t.Fatalf("idle RateAt(5) = %d", got)
+	}
+	b.Touch()
+	if got := b.RateAt(5); got != 40 {
+		t.Fatalf("working RateAt(5) = %d, want 40", got)
+	}
+	if got := b.RateAt(50); got != 50 { // the base rose above the boost: no boost
+		t.Fatalf("working RateAt(50) = %d, want 50", got)
+	}
+	clk.advance(2 * time.Second)
+	if got := b.RateAt(25); got != 25 {
+		t.Fatalf("idle RateAt(25) = %d", got)
+	}
+}

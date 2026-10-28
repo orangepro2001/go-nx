@@ -65,6 +65,11 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 | `.github/workflows/ci.yml` | linux（gofmt / vet / -race / 可移植核心交叉编译）+ windows-latest（build / test / 桌面冒烟） |
 | `internal/{capture,inject}/*_windows_test.go` | 真实桌面冒烟；需 `GO_NX_WINDOWS_E2E=1`，会画窗口、动光标，**别在日常 PC 上开** |
 | `README.md` | 简介、限制、构建与运行 |
+| `internal/hostd/`、`cmd/nx-host/` | 无界面主机（sidecar）：JSON Lines 控制接口，契约 `docs/nx-host.md`；`-test-mode` 在任何机器上安全 |
+| `internal/{synth,logsink,probe}/`、`cmd/nx-probe/` | 合成画面（五种场景 + 四角颜色标记）、只记录输入的注入器、验收探针（固定指纹连接、核对回执与画面） |
+| `mobile/`、`scripts/build-aar.sh` | gomobile 的手机端核心，契约 `docs/mobile.md`；`mobile/api.golden` 固定 Java API；`--check-api` 不需要 SDK/NDK |
+| `scripts/e2e-host-probe.py` | 把真实的 `nx-host` 与 `nx-probe` 作为独立进程跑一遍（CI 的 Linux 与 Windows 都跑） |
+| `docs/backport-ledger.md` | NightDesk → go-nx 的回移台账（B0–B5 全部完成） |
 
 ## release-publish 服务（本机）
 

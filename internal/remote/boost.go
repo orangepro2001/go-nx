@@ -29,8 +29,11 @@ type Boost struct {
 func (b *Boost) Touch() { b.last.Store(b.clock().UnixNano()) }
 
 // Rate is the capture rate to use now.
-func (b *Boost) Rate() int {
-	base := b.Base
+func (b *Boost) Rate() int { return b.RateAt(b.Base) }
+
+// RateAt is Rate for a base rate chosen at the moment of asking, for a host whose
+// idle rate can be changed while it runs; Base is not consulted or changed.
+func (b *Boost) RateAt(base int) int {
 	if base <= 0 {
 		base = DefaultFPS
 	}

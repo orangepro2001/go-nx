@@ -56,6 +56,23 @@ jobs:
       - name: test (race, coverage)
         run: go test -race -cover ./...
 
+      # The real programs, as separate processes: nx-host in test mode (a synthetic screen,
+      # input only logged) driven the way an application would, paired with nx-probe.
+      - name: nx-host and nx-probe end to end
+        run: |
+          go build -o "$RUNNER_TEMP/nx-host" ./cmd/nx-host
+          go build -o "$RUNNER_TEMP/nx-probe" ./cmd/nx-probe
+          python3 scripts/e2e-host-probe.py --host "$RUNNER_TEMP/nx-host" --probe "$RUNNER_TEMP/nx-probe"
+
+      # The Java API that package mobile binds to must not change by accident. This
+      # generates the bindings only (no Android SDK or NDK) and compares their public API
+      # with mobile/api.golden; gobind is installed on the runner at a pinned version.
+      - name: mobile API (gomobile bindings)
+        run: |
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20261011034528-197770444867
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          scripts/build-aar.sh --check-api
+
       # The protocol/session core must stay free of UI and Windows-only imports.
       - name: portable core builds elsewhere
         run: |
@@ -63,7 +80,7 @@ jobs:
             echo "== $target"
             GOOS=${target%/*} GOARCH=${target#*/} go build \
               ./internal/proto ./internal/tile ./internal/trust ./internal/remote \
-              ./internal/synth ./internal/logsink ./internal/probe
+              ./internal/synth ./internal/logsink ./internal/probe ./internal/hostd ./internal/view ./mobile
           done
 
   windows:
@@ -92,6 +109,12 @@ jobs:
       # -v so that the log shows the evidence (docs/ACCEPTANCE.md, section 2).
       - name: self-update on a running exe
         run: go test -count=1 -v -run 'TestReplaceOfARunningExe|TestARunningBackupCopyTakesTheRealNameBack' ./internal/update
+
+      - name: nx-host and nx-probe end to end
+        run: |
+          go build -o "$RUNNER_TEMP/nx-host.exe" ./cmd/nx-host
+          go build -o "$RUNNER_TEMP/nx-probe.exe" ./cmd/nx-probe
+          python scripts/e2e-host-probe.py --host "$RUNNER_TEMP/nx-host.exe" --probe "$RUNNER_TEMP/nx-probe.exe"
 
       # The hosted runner has an interactive 1024x768 desktop that GDI can capture and
       # SendInput can drive (docs/ACCEPTANCE.md, section 1b), so this blocks.
