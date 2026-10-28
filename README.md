@@ -13,8 +13,8 @@ Windows 10/11 之间的轻量局域网远程查看与操作。纯 Go，无 cgo�
 
 - **默认是严格模式**：新设备要先配对（主机点 "Pair new device"，在新设备的 Password 里填主机显示的 6 位码）或输入主机密码。主页上的模式按钮可以切到**开放模式**（任何能连到 UDP 7000 的人都能控制这台机器，需要点两次确认）；切回严格模式时，因开放而放进来的、未经验证的连接会**立刻断开**，已配对的设备不受影响。首次连接一台主机时，控制端会显示它自报的 ID，请与主机主页上的 `ID:` 比对后再按 Enter。
 - 密码和身份私钥以**明文**存在 `%AppData%\go-nx\`。
-- 只采**主屏**；远端画面里**看不到鼠标指针**；分辨率或显示器变化后需重启主机。
-- 没有音频、剪贴板、文件传输、多显示器、协议版本协商。
+- 默认共享主屏，可用 `-display` 选另一块；分辨率或显示器变化会在几秒内跟上（0.5.0 起，**未在真机上验证**）。远端画面默认不画鼠标指针（自带指针的桌面查看器不需要），手机端等可以请求把指针画进画面。
+- 协议有版本与能力协商（v1），同时仍接受原来的 v0 查看器；没有音频、剪贴板、文件传输。
 - 自动化测试**没有**在真实 Windows 上跑过 GDI 抓屏和 `SendInput`，见 [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)。
 
 逐项带代码位置的清单：[`docs/IMPLEMENTED.md`](docs/IMPLEMENTED.md)。`docs/` 里其余的设计文档是设计意图，不是实现状态。
@@ -51,6 +51,8 @@ go-nx.exe [-connect host:port] [-port 7000] [-listen IP[:port]] [-fps 10] [-fps-
 | `internal/trust` | 信任库与准入策略 |
 | `internal/capture`、`internal/inject` | 仅 Windows：GDI 抓屏、`SendInput` 注入 |
 | `internal/ui`、`cmd/go-nx` | Ebiten 界面、托盘、主程序 |
+| `internal/hostd`、`cmd/nx-host`、`cmd/nx-probe` | **核心**：无界面主机（stdin/stdout JSON Lines）和验收探针；作为单独的应用 `go-nx-core` 发布（`CORE_VERSION`，zip 含契约），见 [`docs/release.md`](docs/release.md) |
+| `mobile` | gomobile 的手机端核心（契约 [`docs/mobile.md`](docs/mobile.md)） |
 | `internal/update`、`internal/relhub` | 自更新与 release-publish SDK 副本 |
 
 ## 文档

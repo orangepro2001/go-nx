@@ -25,17 +25,35 @@ scripts/ship.sh --dry-run "..."                  # 只看会升到哪个版本�
 `ship.sh` 依次：预检（在 `main`、工作区干净、不落后于远端、新 versionCode 大于线上已发布的最大值）→ 升 `VERSION` 并提交 `Release X.Y.Z` → 推送 → **等这个提交的 CI 通过**（失败或 15 分钟没结束就不发布）→ `release.sh` 构建并发布 → 用 `relhub check` 验证旧版本被提供新版、新版本是最新。
 发布只是把新版本放到线上；已安装的 go-nx 只有在用户点了 `Restart to update to vX` 之后才会换成新版，不会自动重启。
 
-## 其他产物（不发布）
+## 核心文件：单独的应用 `go-nx-core`
 
-`go-nx.exe` 是**唯一**发布到 release-publish 的产物。仓库里还有别的程序：
+用户 2026-10-28 决定：**核心文件作为单独的应用发布**。release-publish 里现在有两个应用：
+
+| 应用 | 平台 | 发布物 | 版本文件 | 谁用 |
+|---|---|---|---|---|
+| `go-nx` | `win-x64` | 裸的 `go-nx.exe` | `VERSION` | 桌面程序，自更新 |
+| `go-nx-core` | `win-x64` | `go-nx-core-<版本>-win-x64.zip` | `CORE_VERSION` | 要嵌入 go-nx 的程序（NightDesk 等），自己检查、下载、解压 |
+
+zip 里是：`nx-host.exe`（无界面主机，契约 `docs/nx-host.md`）、`nx-probe.exe`（验收探针）、各自的 `SHA256SUMS` / `artifacts.json`（版本、提交、是否干净、Go 版本、构建参数、每个文件的大小和哈希），以及随版本的契约 `docs/nx-host.md`、`docs/protocol.md`。zip 由 `tools/mkzip` 打包：条目按名字排序、时间统一为提交时间、权限固定，**同一提交得到逐字节相同的 zip**（`scripts/artifacts.sh --verify` 验证两次空缓存构建的 exe 和 zip 都相同）。
+
+**版本独立**：核心的版本在 `CORE_VERSION`，`nx-host`、`nx-probe` 编进的是它，不是 `VERSION`。只有核心的内容变了才发新版：`scripts/core-changed.sh` 看自上次 `Release core …` 提交以来，两个程序实际依赖的 Go 文件（`go list -deps` 得到的本模块包）、`go.mod` / `go.sum`、契约文档和构建脚本有没有变（测试文件、界面、文档以外的东西不算）。没变就不发，`ship.sh --core` 会拒绝。
+
+发布一次核心：
+
+```sh
+scripts/ship.sh --core --bump minor "这次改了什么"   # 与 go-nx 一样：升 CORE_VERSION → 提交推送 → 等 CI 绿 → release-core.sh → 验证
+scripts/core-changed.sh                              # 先看有没有变（退出码 0 变了，1 没变，2 判断不了）
+```
+
+`ship.sh`（发 go-nx）结束时，如果核心自上次发布后变了，会提示你补发一次核心。消费方怎么检查更新：`relhub check -app go-nx-core -platform win-x64 -code <已装版本的 versionCode>`（退出码 0 最新，10 有更新），或用 SDK（`docs/SDK.md`）；下载得到的 zip 已由 SDK 验过签名和 SHA-256，zip 内文件的哈希在 `SHA256SUMS`。
+
+## 其他产物（不发布）
 
 | 产物 | 作用 | 怎么得到 |
 |---|---|---|
-| `nx-host.exe` | 无界面主机（sidecar），契约 `nx-host.md` | `build.sh` / `scripts/artifacts.sh` 一起构建，在 `build/` |
-| `nx-probe.exe` | 验收探针 | 同上 |
 | `go-nx-core.aar` | 手机端核心（`mobile`），契约 `mobile.md` | `scripts/build-aar.sh`；需要 Android SDK/NDK，**本机没有，未构建过** |
 
-`scripts/artifacts.sh` 同时写 `build/SHA256SUMS` 和 `build/artifacts.json`（版本、提交、工作树是否干净、Go 版本、构建参数、每个文件的大小和哈希），`scripts/artifacts.sh --verify` 用空缓存构建两次并比较哈希（同一台机器上字节相同）。`nx-host.exe` / `nx-probe.exe` 是否也作为单独的应用发布到 release-publish，留待决定；版本与契约的对应在 `compat-matrix.md`。
+`scripts/artifacts.sh` 写 `SHA256SUMS` 和 `artifacts.json`；`scripts/artifacts.sh core` 只构建核心并打 zip；`--verify` 用空缓存构建两次并比较（同一台机器上字节相同）。版本与契约的对应在 `compat-matrix.md`。
 
 ## 手动发布一个新版本
 

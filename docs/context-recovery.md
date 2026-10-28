@@ -47,8 +47,9 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 
 | 路径 | 作用 |
 |---|---|
-| `VERSION` | 发布版本号，唯一来源 |
-| `build.sh` / `release.sh` | 构建（注入 `-X main.version`）/ 构建并发布 |
+| `VERSION` / `CORE_VERSION` | `go-nx` 的发布版本号 / 单独应用 `go-nx-core`（`nx-host`、`nx-probe` 的 zip）的版本号，各自唯一来源 |
+| `build.sh` / `release.sh` / `release-core.sh` | 构建（注入 `-X main.version`）/ 构建并发布 go-nx / 打包并发布核心 |
+| `scripts/core-changed.sh`、`tools/mkzip` | 核心自上次发布后有没有变 / 确定性的 zip 打包 |
 | `scripts/e2e-update.sh` | 更新路径的端到端检查 |
 | `cmd/go-nx/main_windows.go` | `main`、标志位（`-connect -port -fps -hidden -update-url -no-update -restarted`） |
 | `cmd/go-nx/update_windows.go` | `version` 变量、`startUpdates`、`updateClicked`（安装并重启） |

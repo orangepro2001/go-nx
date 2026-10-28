@@ -65,6 +65,11 @@ jobs:
           go build -o "$RUNNER_TEMP/nx-probe" ./cmd/nx-probe
           python3 scripts/e2e-host-probe.py --host "$RUNNER_TEMP/nx-host" --probe "$RUNNER_TEMP/nx-probe"
 
+      # The core application (nx-host, nx-probe and their contracts, packed as released): a zip
+      # built twice, each time with an empty build cache, has to be byte-identical.
+      - name: core application builds reproducibly
+        run: scripts/artifacts.sh --verify core
+
       # The Java API that package mobile binds to must not change by accident. This
       # generates the bindings only (no Android SDK or NDK) and compares their public API
       # with mobile/api.golden; gobind is installed on the runner at a pinned version.
