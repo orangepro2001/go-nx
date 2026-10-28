@@ -26,8 +26,8 @@
 | 2 | 协议规范与版本协商 | ☑ `docs/protocol.md`　☑ v0 冻结（含 `MsgText` / `WheelH`）+ 手写字节向量　☑ 新 ALPN `go-nx/1`（版本 + 能力位、长度前缀、未知消息可跳过、Welcome）　☑ 新旧四种组合的兼容矩阵测试 + 冻结 v0 查看器 / 原始 v1 字节的主机测试　☑ fuzz | ☑ |
 | 3 | 回移 NightDesk 修复 | `backport-ledger.md`；B0 模块改名 `github.com/orangepro2001/go-nx`；B1 文本 / 横向滚轮；B2 多显示器 + per-monitor DPI + 帧内光标 + `VIRTUALDESK` + 尺寸下发；B3 `pinnedClientTLS` / `FPSFn` / 回调；B4 合成源 + `nx-probe`；B5 `mobile/` + `nx-host` + AAR 脚本；像素 / 鼠标 / 光标几何契约测试 | ☑（B0–B5 完成；AAR 的实际构建待有 Android 工具链时补，见 `ACCEPTANCE.md`） |
 | 4 | 输入与捕获可靠性 | ☑ 按键顺序确定（主机释放 + 查看器发送）　☑ 退出 / 断线释放（含主机空闲看门狗）　☑ 失败的释放重试　☑ 清理释放不拖指针（`NoMove`）　☑ 按住拖出窗口　☑ `Grab` 失败恢复 / 分辨率变化　☑ `Win+L` 策略　☑ 键表补全　☑ 坐标逐像素往返（真 Windows 上验证）　☑ 异步发送队列（有界、合并移动、写超时断开）　☑ 自更新加固（安装前重验、单次安装、改名重试、`.old` 延迟清理、被打断后可自愈）　☑ 指针合成可注入、有像素级测试 | ☑ |
-| 5 | 光标闪烁取证 | `CAPTUREBLT` 运行时开关（默认不变）；人工 A/B 清单；据结果定默认值 | ☐ |
-| 6 | 度量与弱网验收 | 合成源基准（1080p / 4K × 四类画面）；用户态有损 UDP 代理复现 1 Mbps / 80 ms / 1% 丢包 | ☐ |
+| 5 | 光标闪烁取证 | ☑ `CAPTUREBLT` 运行时开关（`-layered=false` 或设置 `capture_layered`=0；默认不变）　☑ 人工 A/B 清单（`ACCEPTANCE.md` H6，步骤和要记录的东西已写明）　☐ 据 H6 的结果定默认值（等用户在自己的 PC 上做；CI runner 没有鼠标，无法复现） | ◐ |
+| 6 | 度量与弱网验收 | ☑ 合成源度量（`tools/perf`：1080p / 4K × 五类画面，首帧 / 稳态字节 / 各阶段耗时 / 带宽 / CPU）　☑ 用户态有损 UDP 代理（`internal/netem`）　☑ 1 Mbit/s、80 ms、1% 丢包下可操作（连得上、画面追得上、回执 p95 < 2 s、同一操作编号只执行一次）　☑ 断网 4 s 后恢复。数字和局限见 `docs/perf.md` | ☑ |
 | 7 | 可持续维护 | `compat-matrix.md`；`nx-host` / AAR 产物构建；人工实机清单随功能更新 | ☐ |
 
 > `build.sh` 现在对 `cmd/*/` 里每个目录都用 `-H=windowsgui` 构建。阶段 3 加入 `nx-host` / `nx-probe`（控制台程序）前必须先改这个循环。

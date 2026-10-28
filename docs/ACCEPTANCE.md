@@ -15,6 +15,8 @@
 | `scripts/e2e-update.sh` | 通过（2026-10-28，更新器加固后重跑） | 真实 `relhub` + 临时目录 + 回环端口 |
 | `scripts/e2e-host-probe.py`（真实的 `nx-host` 与 `nx-probe` 两个进程） | 通过（Linux）；CI 的 Linux 与 Windows 两个 job 都跑 | 配对、v1 与 v0 连接、画面标记完好、8 项输入全有回执、错误指纹在握手时被拒、错误码被拒并报 `denied`、状态计数、`stop` 后退出码 0、stdout 每行都是合法事件。**Wine 里跑不了**：quic-go 在 Wine 上监听 UDP 会报 `wsaioctl: winapi error #10045`（Wine 的限制，不是 go-nx 的问题），所以 Windows 版靠 `windows-latest` |
 | `scripts/build-aar.sh --check-api` | 通过（Linux） | 在临时副本里加 `golang.org/x/mobile`、用 `gobind` 生成 Java 绑定、与 `mobile/api.golden` 逐行比较；故意删一行能检出漂移。仓库的 `go.mod` 不变 |
+| `go run ./tools/perf`、弱网验收 | 通过（Linux，i7-8700） | 合成画面的每帧成本、"1 Mbit/s / 80 ms / 1% 丢包"下可操作、断网恢复；数字和局限见 `perf.md`。同一台机器上 `-count=3` 重复通过 |
+| `scripts/artifacts.sh --verify` | 通过（Linux 交叉编译，Go 1.27.3） | 两次空缓存构建的哈希相同。换机器 / 换 Go 版本 / Windows 本机构建是否相同未验证 |
 | 变异检查 | 本任务新增的每个行为都做过 | 故意改坏实现，对应测试确实失败（updater、FPSFn / OnInput / OnFrame、固定指纹、probe、mobile、hostd）；做的过程中还抓到并修了几个真问题，见交接文档 |
 | 反复运行 | `hostd`、`mobile`、`remote` 的关闭相关测试在 `-race -count=10` 下重复多轮通过 | 中途抓到的两个竞态（关闭时确认写入把连接关掉、`EOF` 被当成错误）已修并各有失败在先的测试 |
 
@@ -51,7 +53,7 @@
 | H3 | 只读目录下的更新失败 | 把 exe 放到只读目录 | 托盘文案；`go-nx.log` 的 `update:` 行 | 待验证（非特权 Unix 上有单测：什么都不改；Windows 的只读目录不阻止改名，这一项更多是权限 / 杀毒占用） |
 | H4 | GDI 抓屏颜色正确 | 被控端显示纯红/绿/蓝窗口，另一台查看 | 颜色是否一致、有无变暗/透明 | 部分覆盖：CI runner 上抓到的 B,G,R 正确（§1b）；真实显卡与查看器端到端仍待验证 |
 | H5 | `SendInput` 点击/拖动/滚轮/键盘 | 控制端远程操作记事本和资源管理器 | 位置是否准确、松开后指针是否跳动 | 部分覆盖：CI runner 上移动 / 点击 / 按键生效（§1b）；拖动、滚轮、真实应用待验证 |
-| H6 | 被控端物理光标闪烁 | 主机空闲 / 有连接 / 移动 / 点击 / 停止输入 / 断开，各观察 | 是否闪烁；显卡/驱动、刷新率、缩放、指针主题 | 待验证（假设：`CAPTUREBLT` 导致；见计划阶段 5） |
+| H6 | 被控端物理光标闪烁（`CAPTUREBLT` 的 A/B） | 在**被控端那台电脑上**，先用默认设置（`go-nx.exe`），再用 `go-nx.exe -layered=false`（等价于设置里 `capture_layered`=`0`）各观察一遍这六种情形：①没有连接 ②有连接但不动 ③控制端移动指针 ④控制端点击后松开 ⑤控制端停止输入 ⑥断开。每种情形盯着被控端自己的指针看 10–20 秒 | 每种情形下被控端指针是否闪烁 / 消失；同时记下显卡与驱动版本、刷新率、缩放比例、指针主题（是否反色 / 动画指针）。若 `-layered=false` 时不再闪烁：再看菜单、提示、下拉框在控制端是否还能看到（`-layered=false` 的代价）——**CI runner 上无论有无 `CAPTUREBLT` 分层窗口都抓得到（§1b），这不能推广到真实显卡 / DWM** | 待验证（假设：`CAPTUREBLT` 导致，没有证据；开关已在，默认值未变；没复现就写"未复现"） |
 | H7 ⚠ | 125% / 150% 显示缩放 | 改缩放后重启主机 | 画面尺寸与点击位置是否一致 | 待验证 |
 | H8 | 多显示器 | 副屏存在时连接 | 抓的是哪块屏；点击落点 | 待验证（当前只支持主屏） |
 | H9 ⚠ | 锁屏 / UAC / `Win+L` | 远端按 `Win+L`；触发 UAC | 会话是否终止；能否恢复 | 待验证 |

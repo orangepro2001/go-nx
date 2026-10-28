@@ -20,17 +20,6 @@ go vet ./...
 GOOS=windows go vet ./...
 go test ./...
 
-mkdir -p build
-# Only the programs listed here are windowed (no console). Every other command is a
-# console tool whose output has to stay visible, so it is built without -H=windowsgui.
-gui=(go-nx)
-for cmd in cmd/*/; do
-	name=$(basename "$cmd")
-	flags="-s -w -X main.version=$VERSION"
-	for g in "${gui[@]}"; do
-		[[ $g == "$name" ]] && flags="$flags -H=windowsgui"
-	done
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
-		go build -trimpath -ldflags "$flags" -o "build/$name.exe" "./$cmd"
-	echo "built build/$name.exe v$VERSION ($(du -h "build/$name.exe" | cut -f1))"
-done
+# The compile step is shared with scripts/artifacts.sh (which also writes SHA256SUMS
+# and artifacts.json, and can check that a build is reproducible).
+scripts/artifacts.sh build
