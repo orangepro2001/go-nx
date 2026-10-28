@@ -18,6 +18,8 @@ type IdleResult struct {
 	CPUPercent    float64 `json:"cpuPercentOfOneCore"` // process CPU time over wall time
 	UpdatesPerSec float64 `json:"updatesPerSec"`
 	DrawsPerSec   float64 `json:"drawsPerSec"`
+	PrivateMB     float64 `json:"privateMb"`  // memory only this process holds, at the end of the interval
+	ResidentMB    float64 `json:"residentMb"` // memory in RAM, shared pages included
 	Note          string  `json:"note,omitempty"`
 }
 
@@ -103,6 +105,8 @@ func (g *idleGame) Update() error {
 			CPUPercent:    float64(cpuTime()-g.cpuAt) / float64(elapsed) * 100,
 			UpdatesPerSec: float64(g.updates.Load()-g.u0) / sec,
 			DrawsPerSec:   float64(g.draws.Load()-g.d0) / sec,
+			PrivateMB:     float64(privateBytes()) / (1 << 20),
+			ResidentMB:    float64(residentBytes()) / (1 << 20),
 		})
 		g.enter(g.phase + 1)
 	}
@@ -199,5 +203,6 @@ func runIdle(seconds float64) (*IdleReport, error) {
 }
 
 func (r IdleResult) String() string {
-	return fmt.Sprintf("%-60s %5.1f%% of a core, %5.1f updates/s, %5.1f draws/s", r.Name, r.CPUPercent, r.UpdatesPerSec, r.DrawsPerSec)
+	return fmt.Sprintf("%-60s %5.1f%% of a core, %5.1f updates/s, %5.1f draws/s, %.0f MB private, %.0f MB resident",
+		r.Name, r.CPUPercent, r.UpdatesPerSec, r.DrawsPerSec, r.PrivateMB, r.ResidentMB)
 }
