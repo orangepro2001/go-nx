@@ -28,6 +28,7 @@ type fakeHost struct {
 	calls         []string
 	endedOnStrict int
 	listenErr     error // what SetListen fails with
+	installErr    error // what InstallDriver fails with
 }
 
 func newFakeHost() *fakeHost {
@@ -83,6 +84,24 @@ func (h *fakeHost) SetAllowWinL(on bool) {
 	defer h.mu.Unlock()
 	h.info.AllowWinL = on
 	h.record(fmt.Sprintf("winl:%v", on))
+}
+func (h *fakeHost) SetVirtualDisplay(on bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.info.VirtualAllowed = on
+	h.record(fmt.Sprintf("virtual:%v", on))
+}
+
+// InstallDriver "installs" the driver, or fails with installErr.
+func (h *fakeHost) InstallDriver() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.record("install")
+	if h.installErr != nil {
+		return h.installErr
+	}
+	h.info.DriverInstalled, h.info.DriverVersion = true, "0.45"
+	return nil
 }
 func (h *fakeHost) Password() string { return h.password }
 func (h *fakeHost) SetPassword(p string) {

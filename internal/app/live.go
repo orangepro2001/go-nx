@@ -7,8 +7,11 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
+	"github.com/orangepro2001/go-nx/internal/proto"
 	"github.com/orangepro2001/go-nx/internal/ui/gfx"
 	"github.com/orangepro2001/go-nx/internal/ui/i18n"
+	"github.com/orangepro2001/go-nx/internal/ui/kit"
+	"github.com/orangepro2001/go-nx/internal/view"
 )
 
 // viewportPx is where the remote picture goes, in device pixels.
@@ -152,6 +155,62 @@ func (a *App) drawLive(screen *ebiten.Image) {
 		}
 		s.draw(screen, a.viewportPx(), dim, a.scaler, a.scaleFilter())
 	}
+}
+
+// sizeSettle is how long the window must keep its size before the host is asked for a
+// virtual display of it: dragging the window's edge must not remake the display at every
+// step.
+const sizeSettle = 500 * time.Millisecond
+
+// syncViewSize keeps the host's virtual display at the size of the window for the session on
+// show, if it wants one, and acts on what the host says: the picture is shown at its own
+// size while it is on a virtual display (it was made to fit), and a failure is reported.
+func (a *App) syncViewSize(s *session) {
+	vc, ok := s.cl.(vdConn)
+	if !ok || !vc.Supports(proto.CapVirtualDisplay) {
+		return
+	}
+	if !s.matchSet {
+		s.match, s.matchSet = a.matchResDefault(), true
+	}
+	w, h := 0, 0
+	if s.match {
+		vp := a.viewportPx()
+		w, h = vp.W, vp.H
+	}
+	if w != s.wantW || h != s.wantH {
+		s.wantW, s.wantH, s.wantSince = w, h, a.now
+	}
+	if w != s.sentW || h != s.sentH {
+		// Back to the host's own screen at once; a new size once it has stayed put.
+		if due := s.wantSince.Add(sizeSettle); w > 0 && a.now.Before(due) {
+			a.wakeAtTime(due)
+		} else if err := vc.SendViewSize(w, h); err != nil {
+			log.Printf("asking for a virtual display: %v", err)
+		} else {
+			s.sentW, s.sentH = w, h
+		}
+	}
+	st, ok := vc.DisplayState()
+	if !ok || st == s.vstate {
+		return
+	}
+	was := s.vstate.Virtual
+	s.vstate = st
+	switch {
+	case st.Virtual && !was:
+		s.modeBefore, s.mode = s.mode, view.ModeActual
+		a.Toast(a.tr.T(i18n.KeyVDOn, "w", int(st.W), "h", int(st.H)), kit.ToneGood)
+	case !st.Virtual && was:
+		s.mode = s.modeBefore
+	}
+	if st.Message != "" {
+		a.Toast(a.tr.T(i18n.KeyVDFailed, "reason", st.Message), kit.ToneWarn)
+		if !st.Virtual {
+			s.match = false // it did not work: the button shows it is off
+		}
+	}
+	a.ui.Invalidate()
 }
 
 // Settings key for how the picture is scaled to the window: "sharp" (the default), "smooth"

@@ -147,6 +147,7 @@ func main() {
 		Connect:   *connect,
 	}, fonts)
 	host.onChange(a.Invalidate)
+	exitHost = host
 	game, err := app.NewGame(a, fonts)
 	if err != nil {
 		log.Fatal(err)

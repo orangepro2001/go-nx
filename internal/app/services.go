@@ -39,7 +39,12 @@ type HostInfo struct {
 	LocalIPs           []string // every address of this PC, to choose from
 	ListenFixed        bool     // where to listen was given on the command line, not by the settings
 	AllowWinL          bool     // the viewer may lock this PC with Win+L
-	ID                 string   // this PC's short ID, which a first-time viewer is asked to compare
+	VirtualAllowed     bool     // a viewer may put its session on a virtual display of its size
+	DriverInstalled    bool     // the Parsec Virtual Display Driver is installed
+	DriverVersion      string
+	DriverInstalling   bool   // its installer is running
+	VirtualActive      string // the virtual display a session is on now ("\\.\DISPLAY9 2560x1440@60"), or ""
+	ID                 string // this PC's short ID, which a first-time viewer is asked to compare
 	Paired             int
 	Controller         string // address of the device controlling this PC, "" for none
 	ControllerVerified bool
@@ -77,6 +82,11 @@ type HostService interface {
 	SetListen(listen string, port int) error
 	// SetAllowWinL lets the viewer lock this PC with Win+L, or not.
 	SetAllowWinL(on bool)
+	// SetVirtualDisplay lets viewers put their session on a virtual display, or not.
+	SetVirtualDisplay(on bool)
+	// InstallDriver runs the Parsec driver's installer and waits for it (minutes, if the
+	// person at the PC takes their time with Windows' prompt). Call it off the UI goroutine.
+	InstallDriver() error
 	Password() string
 	SetPassword(string)
 	Paired() []PairedDevice

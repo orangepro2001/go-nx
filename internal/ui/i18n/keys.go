@@ -236,5 +236,21 @@ const (
 	KeyScaleSmooth
 	KeyScalePixel
 	KeySetScalingNote
+	KeySetVirtual
+	KeySetVirtualAllow
+	KeySetVirtualNote
+	KeyDriverInstalled
+	KeyDriverMissing
+	KeyDriverInstall
+	KeyDriverInstalling
+	KeyDriverInstallNote
+	KeyDriverInstalledToast
+	KeyDriverFailed
+	KeyVirtualInUse
+	KeySetMatchRes
+	KeySetMatchResNote
+	KeyBarMatchRes
+	KeyVDOn
+	KeyVDFailed
 	numKeys
 )

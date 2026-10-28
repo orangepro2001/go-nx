@@ -46,7 +46,7 @@ func (a *App) pageSettings() kit.Node {
 	var cards []kit.Node
 	switch a.setSection {
 	case setSharing:
-		cards = []kit.Node{a.sharingCard(), a.frameRateCard()}
+		cards = []kit.Node{a.sharingCard(), a.virtualCard(), a.frameRateCard()}
 	case setNetwork:
 		cards = []kit.Node{a.networkCard()}
 	case setSession:
@@ -80,6 +80,53 @@ func (a *App) sharingCard() kit.Node {
 		a.switchRow("set.winl", tr.T(i18n.KeySetAllowWinL), a.cfg.Host.Info().AllowWinL, a.cfg.Host.SetAllowWinL),
 		a.caption(tr.T(i18n.KeySetAllowWinLNote)),
 	)
+}
+
+// virtualCard is whether a viewer may put its session on a virtual display of its size, and
+// the driver that makes one.
+func (a *App) virtualCard() kit.Node {
+	tr, p := a.tr, a.ui.Pal
+	info := a.cfg.Host.Info()
+	kids := []kit.Node{
+		a.switchRow("set.virtual", tr.T(i18n.KeySetVirtualAllow), info.VirtualAllowed, a.cfg.Host.SetVirtualDisplay),
+		a.caption(tr.T(i18n.KeySetVirtualNote)),
+	}
+	switch {
+	case info.DriverInstalling:
+		kids = append(kids, &kit.Label{Text: tr.T(i18n.KeyDriverInstalling), Color: p.Warn, Wrap: true})
+	case info.DriverInstalled:
+		kids = append(kids, a.body(tr.T(i18n.KeyDriverInstalled, "version", info.DriverVersion)))
+	default:
+		kids = append(kids,
+			a.body(tr.T(i18n.KeyDriverMissing)),
+			&kit.Row{Children: []kit.Node{
+				&kit.Button{ID: "set.driver", Label: tr.T(i18n.KeyDriverInstall), Icon: kit.IconDownload, OnClick: a.installDriver},
+				kit.Spacer(),
+			}},
+			a.caption(tr.T(i18n.KeyDriverInstallNote)),
+		)
+	}
+	if info.VirtualActive != "" {
+		kids = append(kids, a.dim(tr.T(i18n.KeyVirtualInUse, "what", info.VirtualActive)))
+	}
+	return a.card(tr.T(i18n.KeySetVirtual), kit.Color{}, kids...)
+}
+
+// installDriver runs the driver's installer in the background (Windows' prompt can wait for
+// minutes) and says how it went.
+func (a *App) installDriver() {
+	tr := a.tr
+	go func() {
+		err := a.cfg.Host.InstallDriver()
+		a.Do(func() {
+			if err != nil {
+				a.Toast(tr.T(i18n.KeyDriverFailed, "error", err.Error()), kit.ToneWarn)
+			} else {
+				a.Toast(tr.T(i18n.KeyDriverInstalledToast), kit.ToneGood)
+			}
+		})
+	}()
+	a.ui.Invalidate()
 }
 
 // networkCard is where this PC waits for connections: the port, and every address or one.
@@ -225,6 +272,8 @@ func (a *App) sessionCard2() kit.Node {
 	return a.card(tr.T(i18n.KeySetSession), kit.Color{},
 		toggle("set.reconnect", tr.T(i18n.KeySetAutoReconnect), keyAutoReconnect, a.autoReconnect()),
 		toggle("set.korean", tr.T(i18n.KeySetKoreanKeys), keyKoreanKeys, a.koreanKeys()),
+		toggle("set.matchres", tr.T(i18n.KeySetMatchRes), keyMatchRes, a.matchResDefault()),
+		a.caption(tr.T(i18n.KeySetMatchResNote)),
 	)
 }
 

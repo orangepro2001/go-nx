@@ -159,11 +159,13 @@ jobs:
 
       # The hosted runner has an interactive 1024x768 desktop that GDI can capture and
       # SendInput can drive (docs/ACCEPTANCE.md, section 1b), so this blocks.
-      - name: real desktop smoke (capture, inject)
+      - name: real desktop smoke (capture, inject, display layout)
         env:
           GO_NX_WINDOWS_E2E: "1"
-        # -p 1 runs the packages one after the other: they share the desktop.
-        run: go test -count=1 -p 1 -v ./internal/capture ./internal/inject
+        # -p 1 runs the packages one after the other: they share the desktop. vdisplay reads
+        # the runner's display modes and layout and applies the layout again (no Parsec driver
+        # here, so no virtual display is made).
+        run: go test -count=1 -p 1 -v ./internal/capture ./internal/inject ./internal/vdisplay
 
       # U0 on a real Windows desktop (DirectX 11, software rendering on the runner): fonts that
       # Windows ships, the shader, ScheduleFrame, idle cost, and keys injected into the window.

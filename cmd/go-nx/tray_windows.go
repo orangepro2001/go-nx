@@ -115,6 +115,9 @@ func twoDigits(n int) string {
 // timeout.
 func quitApp() {
 	app.CloseAllSessions()
+	if exitHost != nil {
+		exitHost.stopVirtual() // the host's own screen back before go-nx goes
+	}
 	systray.Quit()
 	os.Exit(0)
 }

@@ -48,7 +48,16 @@ type session struct {
 	held         map[uint16]bool
 	nextRepeat   map[uint16]time.Time // when each held key repeats next
 	mode         view.Mode            // how the picture is shown
-	panX, panY   float64              // how far into the picture the window's left and top edges are (actual size)
+
+	// The host's virtual display (see App.syncViewSize). Only the UI goroutine uses these.
+	match        bool               // the session wants the host's virtual display at the window's size
+	matchSet     bool               // match has been set from the settings, once the host could
+	sentW, sentH int                // the size last asked for; 0 x 0 for none
+	wantW, wantH int                // the size to ask for, once it has stayed put a moment
+	wantSince    time.Time          // when it last changed
+	vstate       proto.DisplayState // the host's last word, as acted on
+	modeBefore   view.Mode          // the picture's mode before the virtual display
+	panX, panY   float64            // how far into the picture the window's left and top edges are (actual size)
 	lastPan      time.Time
 	panning      bool
 	down         map[int32]bool // mouse buttons pressed on the remote
@@ -89,6 +98,9 @@ type patch struct {
 func newSession(cl Conn, nextOp *uint64, changed func()) *session {
 	s := &session{cl: cl, pending: map[uint64]time.Time{}, held: map[uint16]bool{}, nextRepeat: map[uint16]time.Time{}, down: map[int32]bool{}, done: make(chan struct{}), nextOp: nextOp, changed: changed}
 	liveSessions.Store(s, struct{}{})
+	if vc, ok := cl.(vdConn); ok {
+		vc.OnDisplayState(s.notify)
+	}
 	go func() {
 		err := cl.Run(context.Background(), s.onFrame, s.onReceipt)
 		s.mu.Lock()
@@ -463,10 +475,24 @@ type (
 		SendText(opID uint64, text string) error
 	}
 	statsConn interface{ Stats() remote.Stats }
-	hostConn  interface {
+	// vdConn is a connection to a host that can show the session on a virtual display of the
+	// window's size.
+	vdConn interface {
+		Supports(proto.Caps) bool
+		SendViewSize(w, h int) error
+		DisplayState() (proto.DisplayState, bool)
+		OnDisplayState(func())
+	}
+	hostConn interface {
 		Host() (remote.HostInfo, bool)
 	}
 )
+
+// canMatch reports whether the host can show the session on a virtual display.
+func (s *session) canMatch() bool {
+	vc, ok := s.cl.(vdConn)
+	return ok && vc.Supports(proto.CapVirtualDisplay)
+}
 
 // canText reports whether the host can type text sent to it, which only a host that said so
 // is asked to (an older one ends the session when it meets a message it does not know).

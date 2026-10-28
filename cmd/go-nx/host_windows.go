@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -27,6 +29,7 @@ import (
 	"github.com/orangepro2001/go-nx/internal/remote"
 	"github.com/orangepro2001/go-nx/internal/trust"
 	"github.com/orangepro2001/go-nx/internal/ui/i18n"
+	"github.com/orangepro2001/go-nx/internal/vdisplay"
 )
 
 // pairingWindow is long enough to walk to the other PC, confirm the host's ID there and type
@@ -64,6 +67,61 @@ type hostState struct {
 	ln      *remote.HostListener       // nil while not listening
 	serve   func(*remote.HostListener) // accepts on a listener; nil until the screen is open
 	bindGen int                        // counts moves, so a wait for an address gives up when the host moves again
+
+	vsys       *vdisplay.Windows // the Parsec driver and the displays
+	vd         *vdisplay.Manager // puts a session on a virtual display; nil until the screen is open
+	vddOK      bool              // the driver is installed (watchPort keeps it up to date)
+	vddVersion string            // its version
+	installing atomic.Bool       // the driver's installer is running
+}
+
+// exitHost is the host, for quitApp: the displays are put back before go-nx exits.
+var exitHost *hostState
+
+// stopVirtual puts the host's own screen back and lets go of the driver.
+func (h *hostState) stopVirtual() {
+	if h.vd != nil {
+		h.vd.Release(nil)
+	}
+	if h.vsys != nil {
+		h.vsys.Close()
+	}
+}
+
+// virtualAllowed reports whether a viewer may put its session on a virtual display.
+func (h *hostState) virtualAllowed() bool { return h.settings.Bool("virtual_display", false) }
+
+// SetVirtualDisplay lets viewers use a virtual display, or not, from their next session, and
+// saves the choice. Turning it off puts the host's own screen back at once.
+func (h *hostState) SetVirtualDisplay(on bool) {
+	h.save("virtual_display", on)
+	if !on && h.vd != nil {
+		go func() { h.vd.Release(nil); h.changed() }()
+	}
+	log.Printf("virtual display for viewers: %v", on)
+	h.changed()
+}
+
+// InstallDriver runs the Parsec driver's installer, which Windows asks the person at this PC
+// to allow, and waits for it.
+func (h *hostState) InstallDriver() error {
+	if !h.installing.CompareAndSwap(false, true) {
+		return errors.New("the installer is already running")
+	}
+	defer h.installing.Store(false)
+	h.changed()
+	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "go-nx", "driver")
+	err := vdisplay.Install(dir)
+	ok, ver := h.vsys.Driver()
+	h.mu.Lock()
+	h.vddOK, h.vddVersion = ok, ver
+	h.mu.Unlock()
+	log.Printf("Parsec driver installer: %v; installed now: %v %s", err, ok, ver)
+	h.changed()
+	if err == nil && !ok {
+		err = errors.New("the installer finished but the driver is not there")
+	}
+	return err
 }
 
 func (h *hostState) fail(err error) {
@@ -161,11 +219,24 @@ func (h *hostState) Info() app.HostInfo {
 	return app.HostInfo{
 		Err: h.Err, Addrs: h.Addrs, Port: h.Port, ListenIP: h.ListenIP, LocalIPs: h.local, ListenFixed: h.fixed,
 		AllowWinL: h.settings.Bool("allow_win_l", false), Paired: h.policy.TrustedCount(), ID: h.ID,
+		VirtualAllowed: h.virtualAllowed(), DriverInstalled: h.vddOK, DriverVersion: h.vddVersion,
+		DriverInstalling: h.installing.Load(), VirtualActive: h.virtualActive(),
 		Controller: h.Controller, ControllerVerified: h.Controller != "" && !h.CtrlOpen,
 		Rejected: h.Rejected, RejectedWhy: h.RejectedBy,
 		PairingLeft: h.policy.PairingLeft(), PairingCode: h.policy.PairingCode(),
 		RequireAuth: h.requireAuth(), Lockout: h.policy.Lockout(), PortShared: h.Sharers,
 	}
+}
+
+// virtualActive describes the virtual display a session is on ("\\.\DISPLAY9 2560x1440@60"), or "".
+func (h *hostState) virtualActive() string {
+	if h.vd == nil {
+		return ""
+	}
+	if dev, m, ok := h.vd.Active(); ok {
+		return dev + " " + m.String()
+	}
+	return ""
 }
 
 // portCheckEvery is how often the host looks for another program bound to its port.
@@ -177,6 +248,16 @@ const portCheckEvery = 10 * time.Second
 // has to be told.
 func (h *hostState) watchPort() {
 	for {
+		if h.vsys != nil && !h.installing.Load() {
+			ok, ver := h.vsys.Driver()
+			h.mu.Lock()
+			driverMoved := ok != h.vddOK || ver != h.vddVersion
+			h.vddOK, h.vddVersion = ok, ver
+			h.mu.Unlock()
+			if driverMoved {
+				h.changed()
+			}
+		}
 		local := localIPs()
 		h.mu.Lock()
 		port, on := h.Port, h.ln != nil
@@ -365,6 +446,14 @@ func startHost(listen string, port int, fixed bool, rates remote.Rates, display 
 	h.policy.SetPassword(h.Password())
 	h.policy.SetRequireAuth(h.requireAuth())
 	h.policy.SetLockout(h.settings.Bool("lockout", true))
+	// A go-nx that ended while a session was on a virtual display left the layout to go back
+	// to on disk: put it back before anything looks at the monitors.
+	h.vsys = vdisplay.NewWindows()
+	layout := vdisplay.FileStore(filepath.Join(configDir(), "display-layout.json"))
+	if err := vdisplay.NewManager(h.vsys, nil, layout, log.Printf).Recover(); err != nil {
+		log.Printf("startup: %v", err)
+	}
+	h.vddOK, h.vddVersion = h.vsys.Driver()
 	t0 := time.Now()
 	if display == "" {
 		display, _ = h.settings.Get("display")
@@ -382,6 +471,7 @@ func startHost(listen string, port int, fixed bool, rates remote.Rates, display 
 	retargetInjector(inj, scr.Display())
 	h.rates = rates.Normalized()
 	log.Printf("startup: frame rate %s", h.rates)
+	h.vd = vdisplay.NewManager(h.vsys, scr, layout, log.Printf)
 	h.serve = newAcceptor(h, scr, inj)
 	t0 = time.Now()
 	if h.bind(listen, port) == nil {
@@ -574,7 +664,18 @@ func newAcceptor(h *hostState, scr *capture.Screen, inj *inject.Injector) func(*
 			// applies to the next connection.
 			rates := h.currentRates()
 			boost := rates.Boost()
+			// A viewer may put its session on a virtual display if the host allows it now;
+			// the display is the session's, and goes when the session ends.
+			var onViewSize func(w, hh int, report func(proto.DisplayState))
+			if h.vd != nil && h.virtualAllowed() {
+				onViewSize = func(w, hh int, report func(proto.DisplayState)) {
+					h.vd.Request(conn, w, hh, func(st proto.DisplayState) { report(st); h.changed() })
+				}
+			}
 			go func() {
+				if h.vd != nil {
+					defer func() { h.vd.Release(conn); h.changed() }()
+				}
 				err := remote.Serve(context.Background(), conn, scr, inj, dd, remote.Options{
 					FPS:             rates.Base,
 					FPSFn:           boost.Rate,
@@ -593,7 +694,8 @@ func newAcceptor(h *hostState, scr *capture.Screen, inj *inject.Injector) func(*
 					OnPeer: func(p remote.PeerInfo) {
 						log.Printf("viewer %s speaks control protocol v%d (name %q)", conn.RemoteAddr(), p.Version, p.Name)
 					},
-					OnError: func(err error) { log.Printf("session cleanup: %v", err) },
+					OnError:    func(err error) { log.Printf("session cleanup: %v", err) },
+					OnViewSize: onViewSize,
 					OnAuthed: func() {
 						mu.Lock()
 						defer mu.Unlock()

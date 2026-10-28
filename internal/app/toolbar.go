@@ -14,9 +14,16 @@ import (
 
 // Settings keys of the session view.
 const (
-	keyAutoReconnect = "auto_reconnect" // "0" turns it off; the default is on
-	keyKoreanKeys    = "korean_keys"    // "1" shows the 한/영 and 한자 buttons whatever the language
+	keyAutoReconnect = "auto_reconnect"   // "0" turns it off; the default is on
+	keyKoreanKeys    = "korean_keys"      // "1" shows the 한/영 and 한자 buttons whatever the language
+	keyMatchRes      = "match_resolution" // "1": sessions start by asking the host for a virtual display of the window's size
 )
+
+// matchResDefault reports whether sessions ask for a virtual display from the start.
+func (a *App) matchResDefault() bool {
+	v, _ := a.cfg.Settings.Get(keyMatchRes)
+	return v == "1"
+}
 
 // barShowFor is how long the toolbar stays after the pointer last touched it.
 const barShowFor = 3500 * time.Millisecond
@@ -239,6 +246,12 @@ func (a *App) toolbarVariant(t *tab, s *session, words, who bool) kit.Node {
 			} else {
 				a.openText(t)
 			}
+		}))
+	}
+	if s.canMatch() {
+		row.Children = append(row.Children, btn("vdisplay", kit.IconMonitor, tr.T(i18n.KeyBarMatchRes), s.match, kit.Ghost, func() {
+			s.match, s.matchSet = !s.match, true
+			a.ui.Invalidate()
 		}))
 	}
 	row.Children = append(row.Children, btn("release", kit.IconKeyRelease, tr.T(i18n.KeyBarReleaseKeys), false, kit.Ghost, s.releaseKeys))

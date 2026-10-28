@@ -930,3 +930,32 @@ func TestThePictureScalingCanBeChosen(t *testing.T) {
 		t.Errorf("scaling saved as %q (%v), want pixel", v, r.a.scaleFilter())
 	}
 }
+
+func TestTheVirtualDisplaySettingsOnTheHost(t *testing.T) {
+	r := newRig(t)
+	r.a.page, r.a.setSection = PageSettings, setSharing
+	r.a.ui.Invalidate()
+	r.step(kit.Input{})
+	if !r.has("The Parsec Virtual Display Driver is not installed.") || !r.has("Install the driver") || !r.has("someone at this PC has to confirm") {
+		t.Fatalf("sharing settings without the driver: %q", r.texts())
+	}
+	r.pressButton("set.virtual")
+	if !r.host.called("virtual:true") || !r.host.Info().VirtualAllowed {
+		t.Fatalf("the switch did not allow virtual displays: %v", r.host.calls)
+	}
+	r.host.mu.Lock()
+	r.host.installErr = errString("the administrator prompt was declined")
+	r.host.mu.Unlock()
+	r.pressButton("set.driver")
+	r.wait("the failure", func() bool { return r.has("The driver was not installed: the administrator prompt was declined") })
+	r.host.mu.Lock()
+	r.host.installErr = nil
+	r.host.mu.Unlock()
+	r.pressButton("set.driver")
+	r.wait("the driver", func() bool { return r.has("The driver is installed.") })
+	r.a.ui.Invalidate()
+	r.step(kit.Input{})
+	if !r.has("Parsec Virtual Display Driver 0.45 is installed.") || r.has("Install the driver") {
+		t.Errorf("after installing: %q", r.texts())
+	}
+}

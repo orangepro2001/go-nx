@@ -222,6 +222,9 @@ func (a *App) pollTabs() {
 		before := t.state
 		hadConfirm := t.confirm != nil
 		a.pollTab(i, t)
+		if t.state == tabLive && a.active == i+1 {
+			a.syncViewSize(t.sess)
+		}
 		if t.state != before || (t.confirm != nil) != hadConfirm {
 			a.ui.Invalidate() // what the tab shows has changed
 		}

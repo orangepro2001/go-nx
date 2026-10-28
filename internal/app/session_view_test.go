@@ -30,6 +30,9 @@ type richConn struct {
 	caps    proto.Caps
 	texts   []string
 	inputs  []proto.Input
+	sizes   [][2]int            // virtual display sizes asked for
+	display *proto.DisplayState // what the host last said about it
+	onDisp  func()
 }
 
 func newRichConn(caps proto.Caps) *richConn {
@@ -69,6 +72,37 @@ func (c *richConn) SendText(id uint64, s string) error {
 	c.texts = append(c.texts, s)
 	return nil
 }
+func (c *richConn) SendViewSize(w, h int) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sizes = append(c.sizes, [2]int{w, h})
+	return nil
+}
+func (c *richConn) DisplayState() (proto.DisplayState, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.display == nil {
+		return proto.DisplayState{}, false
+	}
+	return *c.display, true
+}
+func (c *richConn) OnDisplayState(f func()) { c.mu.Lock(); c.onDisp = f; c.mu.Unlock() }
+
+// hostSays is the host answering about the virtual display.
+func (c *richConn) hostSays(st proto.DisplayState) {
+	c.mu.Lock()
+	c.display = &st
+	f := c.onDisp
+	c.mu.Unlock()
+	if f != nil {
+		f()
+	}
+}
+func (c *richConn) asked() [][2]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([][2]int(nil), c.sizes...)
+}
 func (c *richConn) Stats() remote.Stats {
 	return remote.Stats{RTT: 38 * time.Millisecond, BytesReceived: 1 << 20}
 }
@@ -93,6 +127,7 @@ type scriptedConnector struct {
 	fail  int   // this many dials fail first, with failErr
 	fatal error // if set, every dial fails with it
 	err   error
+	caps  proto.Caps // abilities its hosts have besides text
 }
 
 func (c *scriptedConnector) Dial(_ context.Context, addr, password string) (Conn, error) {
@@ -107,7 +142,7 @@ func (c *scriptedConnector) Dial(_ context.Context, addr, password string) (Conn
 		c.fail--
 		return nil, c.err
 	}
-	cn := newRichConn(proto.CapText)
+	cn := newRichConn(proto.CapText | c.caps)
 	c.conns = append(c.conns, cn)
 	return cn, nil
 }
@@ -123,9 +158,15 @@ func (c *scriptedConnector) conn(i int) *richConn {
 // liveRig is a rig with one live tab that has a picture.
 func liveRig(t *testing.T, opts ...rigOption) (*rig, *scriptedConnector, *richConn) {
 	t.Helper()
+	return liveRigWith(t, 0, opts...)
+}
+
+// liveRigWith is liveRig with a host that has caps besides text.
+func liveRigWith(t *testing.T, caps proto.Caps, opts ...rigOption) (*rig, *scriptedConnector, *richConn) {
+	t.Helper()
 	r := newRig(t, opts...)
 	r.a.Resize(1900, 1200, 1) // wide enough for the toolbar with its words
-	sc := &scriptedConnector{fakeConnector: r.conn, err: &quic.IdleTimeoutError{}}
+	sc := &scriptedConnector{fakeConnector: r.conn, err: &quic.IdleTimeoutError{}, caps: caps}
 	r.a.cfg.Connector = sc
 	sc.pinned["10.0.0.1:7000"] = "x"
 	r.a.openTab("Press 3", "10.0.0.1", "pw", "")
@@ -466,5 +507,78 @@ func TestTheToolbarShrinksToFitTheWindow(t *testing.T) {
 	}
 	if w, n, _ := count(420); w || n {
 		t.Errorf("very narrow: words %v name %v (only the controls)", w, n)
+	}
+}
+
+// With the button on, the host is asked for a virtual display of the window's size once the
+// size has stayed put; while the host is on one the picture is shown at its own size; off
+// asks for the host's own screen at once; a failure is reported and turns the button off.
+func TestMatchResolutionAsksTheHostForAVirtualDisplay(t *testing.T) {
+	r, _, c := liveRigWith(t, proto.CapVirtualDisplay)
+	s := r.a.tabs[0].sess
+	r.step(kit.Input{})
+	if len(c.asked()) != 0 {
+		t.Fatalf("asked for %v without being told to", c.asked())
+	}
+	r.pressButton("bar.handle")
+	r.step(kit.Input{})
+	if !r.has("Match resolution") {
+		t.Fatalf("no button for a host that can: %q", r.texts())
+	}
+	r.pressButton("bar.vdisplay")
+	r.step(kit.Input{})
+	if len(c.asked()) != 0 {
+		t.Fatalf("asked before the size settled: %v", c.asked())
+	}
+	for i := 0; i < 30; i++ { // 600 ms
+		r.step(kit.Input{})
+	}
+	vp := r.a.viewportPx()
+	if got := c.asked(); len(got) != 1 || got[0] != [2]int{vp.W, vp.H} {
+		t.Fatalf("asked for %v, want the viewport %dx%d once", got, vp.W, vp.H)
+	}
+	c.hostSays(proto.DisplayState{Virtual: true, W: 1920, H: 1080})
+	r.step(kit.Input{})
+	if s.mode != view.ModeActual || !r.has("The host is showing a virtual display at 1920×1080.") {
+		t.Fatalf("mode %v, texts %q", s.mode, r.texts())
+	}
+	r.pressButton("bar.vdisplay")
+	r.step(kit.Input{})
+	if got := c.asked(); len(got) != 2 || got[1] != [2]int{0, 0} {
+		t.Fatalf("turning it off asked for %v", got)
+	}
+	c.hostSays(proto.DisplayState{})
+	r.step(kit.Input{})
+	if s.mode != view.ModeFit {
+		t.Errorf("back on the host's screen, the mode is %v", s.mode)
+	}
+	r.pressButton("bar.vdisplay")
+	for i := 0; i < 30; i++ {
+		r.step(kit.Input{})
+	}
+	c.hostSays(proto.DisplayState{Message: "the Parsec Virtual Display Driver is not installed on the host"})
+	r.step(kit.Input{})
+	if s.match || !r.has("The host could not use a virtual display: the Parsec Virtual Display Driver is not installed on the host") {
+		t.Errorf("a failure: match %v, texts %q", s.match, r.texts())
+	}
+}
+
+// The setting starts sessions asking; a host that cannot is never asked and has no button.
+func TestMatchResolutionFromTheSettingsAndOnlyForHostsThatCan(t *testing.T) {
+	r, _, c := liveRigWith(t, proto.CapVirtualDisplay, func(r *rig) { r.set.Set(keyMatchRes, "1") })
+	for i := 0; i < 30; i++ {
+		r.step(kit.Input{})
+	}
+	if len(c.asked()) != 1 {
+		t.Errorf("with the setting on, asked %v", c.asked())
+	}
+	r2, _, c2 := liveRig(t, func(r *rig) { r.set.Set(keyMatchRes, "1") })
+	for i := 0; i < 30; i++ {
+		r2.step(kit.Input{})
+	}
+	r2.pressButton("bar.handle")
+	r2.step(kit.Input{})
+	if len(c2.asked()) != 0 || r2.has("Match resolution") {
+		t.Errorf("a host without the ability was asked %v, or offered the button", c2.asked())
 	}
 }

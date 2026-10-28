@@ -141,6 +141,11 @@ var previewScenes = []previewScene{
 	}},
 	{"settings", func(p *Preview) { p.App.page = PageSettings }},
 	{"settings-sharing", func(p *Preview) { p.App.page, p.App.setSection = PageSettings, setSharing }},
+	{"settings-sharing-virtual", func(p *Preview) {
+		p.App.page, p.App.setSection = PageSettings, setSharing
+		p.host.info.VirtualAllowed, p.host.info.DriverInstalled, p.host.info.DriverVersion = true, true, "0.45"
+		p.host.info.VirtualActive = `\\.\DISPLAY9 2560x1440@60`
+	}},
 	{"settings-network", func(p *Preview) {
 		p.App.page, p.App.setSection = PageSettings, setNetwork
 		p.host.info.ListenIP, p.host.info.Port, p.App.portText = "100.109.77.29", 7001, "7001"
@@ -202,6 +207,8 @@ func (h *previewHost) ClosePairing()              {}
 func (h *previewHost) SetRequireAuth(on bool) int { h.info.RequireAuth = on; return 0 }
 func (h *previewHost) SetLockout(on bool)         { h.info.Lockout = on }
 func (h *previewHost) SetAllowWinL(on bool)       { h.info.AllowWinL = on }
+func (h *previewHost) SetVirtualDisplay(on bool)  { h.info.VirtualAllowed = on }
+func (h *previewHost) InstallDriver() error       { return nil }
 func (h *previewHost) SetListen(listen string, port int) error {
 	h.info.ListenIP, h.info.Port = listen, port
 	return nil
@@ -284,10 +291,15 @@ func (c *previewConn) Run(ctx context.Context, onFrame func(*tile.Frame, []tile.
 	}
 	return errors.New("preview ended")
 }
-func (c *previewConn) SendInput(proto.Input) error   { return nil }
-func (c *previewConn) Close()                        { close(c.done) }
-func (c *previewConn) Supports(caps proto.Caps) bool { return caps.Has(proto.CapText) }
-func (c *previewConn) SendText(uint64, string) error { return nil }
+func (c *previewConn) SendInput(proto.Input) error { return nil }
+func (c *previewConn) Close()                      { close(c.done) }
+func (c *previewConn) Supports(caps proto.Caps) bool {
+	return (proto.CapText | proto.CapVirtualDisplay).Has(caps) // the toolbar with every button
+}
+func (c *previewConn) SendViewSize(int, int) error              { return nil }
+func (c *previewConn) DisplayState() (proto.DisplayState, bool) { return proto.DisplayState{}, false }
+func (c *previewConn) OnDisplayState(func())                    {}
+func (c *previewConn) SendText(uint64, string) error            { return nil }
 func (c *previewConn) Stats() remote.Stats {
 	return remote.Stats{RTT: 38 * time.Millisecond, BytesReceived: 3 << 20}
 }
