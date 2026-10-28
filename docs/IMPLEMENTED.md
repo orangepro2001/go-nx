@@ -41,6 +41,8 @@
 | 回执状态 | 部分 | 只有 Executed / Failed；没有 Accepted / Timeout | `proto.go:38-39` |
 | 未确认提示 | 已实现 | 3 s 没收到回执只提示"不确定"，不自动重试 | `viewer_windows.go:30,170` |
 | 单控制者 | 已实现 | 同时只有一个控制者，新连接顶替旧连接，旧会话持有的按键/鼠标键被释放 | `internal/remote/input.go`、`cmd/go-nx/host_windows.go` |
+| 输入的收尾 | 已实现（2026-10-28） | 查看器断开 / 被顶替时，主机按固定顺序释放它按住的东西：先鼠标键、再按键，各自"后按的先放"（Ctrl+Shift+点击会被释放成：点击、Shift、Ctrl）；清理性的鼠标抬起带 `NoMove`，**不再把指针拖回当初按下的位置**；被桌面拒绝的释放保留（最多 64 个），下次使用时重试；会话静默超过 20 s（`HeldInputIdle`）仍持有按键 / 按钮就自动释放，不必等 45 s 的 QUIC 空闲超时；查看器按住按钮而指针不动时每 5 s 发一个保活移动。**Win+L 默认被主机拒绝**（回 Failed 回执；设置 `allow_win_l` = `1` 放行），其他 Win 组合不受影响 | `internal/remote/input.go`、`host.go`、`cmd/go-nx/host_windows.go` |
+| 查看器的输入 | 已改进（2026-10-28） | 同一帧里的多个按键事件按键盘顺序发送（普通键的抬起、修饰键按下、普通键按下、修饰键抬起），不再随 map 遍历顺序；释放同理，修饰键最后；按住按钮把指针拖出窗口时继续把位置夹到画面边缘并发送，所以松开不会跳；鼠标键按固定顺序；退出 / 更新重启时先关闭所有会话（任何 goroutine 调用都安全），主机立即释放；键表补上 F13–F24、Print Screen、ISO 键盘的额外键 | `internal/view`、`cmd/go-nx/viewer_windows.go`、`keys_windows.go`、`tray_windows.go` |
 | 断线后重连 | 部分 | 首次拨号最多尝试 4 次（握手时限 2/3/4/6 s）；断线后需手动重连 | `cmd/go-nx/tabs_windows.go:88` |
 
 ## 4. 安全与配对

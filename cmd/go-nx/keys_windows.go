@@ -2,7 +2,11 @@
 
 package main
 
-import "github.com/hajimehoshi/ebiten/v2"
+import (
+	"sort"
+
+	"github.com/hajimehoshi/ebiten/v2"
+)
 
 // vk maps Ebiten keys to Windows virtual-key codes. Bit 0x100 marks an extended
 // key where the code alone is ambiguous (numpad Enter is VK_RETURN, extended).
@@ -37,4 +41,19 @@ func init() {
 	for i := 0; i < 12; i++ {
 		vk[ebiten.KeyF1+ebiten.Key(i)] = uint16(0x70 + i)
 	}
+	for i := 0; i < 12; i++ {
+		vk[ebiten.KeyF13+ebiten.Key(i)] = uint16(0x7C + i) // F13 to F24
+	}
+	vk[ebiten.KeyPrintScreen] = 0x2C
+	vk[ebiten.KeyIntlBackslash] = 0xE2 // the extra key on ISO keyboards
+
+	// Keys are visited in a fixed order: ranging over the map would hand the
+	// events of one tick to the host in a different order each time.
+	for k := range vk {
+		vkKeys = append(vkKeys, k)
+	}
+	sort.Slice(vkKeys, func(i, j int) bool { return vk[vkKeys[i]] < vk[vkKeys[j]] })
 }
+
+// vkKeys is every key in vk, ordered by virtual-key code.
+var vkKeys []ebiten.Key

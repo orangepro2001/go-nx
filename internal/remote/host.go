@@ -102,6 +102,10 @@ type Options struct {
 	// the session is ended; default 60 s. A source without Refresh ends the
 	// session at the first failure.
 	GrabRetryFor time.Duration
+	// HeldInputIdle is how long a viewer may be silent while holding a key or mouse
+	// button before the host lets go of them; default 20 s. A live viewer holding a
+	// key keeps sending its auto-repeat, so only one that has gone is released early.
+	HeldInputIdle time.Duration
 	// OnSourceChanged, if set, is called with the new size when a Refresher source
 	// reports that its geometry changed, so the caller can retarget the injector.
 	OnSourceChanged func(w, h int)
@@ -157,6 +161,9 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 	}
 	if opt.GrabRetryFor <= 0 {
 		opt.GrabRetryFor = time.Minute
+	}
+	if opt.HeldInputIdle <= 0 {
+		opt.HeldInputIdle = defaultIdle
 	}
 	// Hold a pre-authentication slot until the host has decided about this viewer.
 	leaveGate := func() {}
@@ -309,6 +316,11 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-tick.C:
+		}
+		if inputSession != nil {
+			if released, err := inputSession.ReleaseIfIdle(opt.HeldInputIdle); released && opt.OnError != nil {
+				opt.OnError(fmt.Errorf("let go of held input after %v without word from the viewer (release error: %v)", opt.HeldInputIdle, err))
+			}
 		}
 		if refresher != nil && time.Since(lastRefresh) >= opt.RefreshEvery {
 			lastRefresh = time.Now()

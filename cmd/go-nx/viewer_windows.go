@@ -21,12 +21,14 @@ import (
 	"github.com/orangepro2001/go-nx/internal/remote"
 	"github.com/orangepro2001/go-nx/internal/tile"
 	"github.com/orangepro2001/go-nx/internal/ui"
+	"github.com/orangepro2001/go-nx/internal/view"
 )
 
 const (
-	repeatDelay   = 30 // ticks a key is held before auto-repeat starts
-	repeatEvery   = 3
-	receiptWarnAt = 3 * time.Second
+	repeatDelay    = 30 // ticks a key is held before auto-repeat starts
+	repeatEvery    = 3
+	receiptWarnAt  = 3 * time.Second
+	keepAliveEvery = 5 * time.Second // a held button with a still pointer says it is alive this often
 )
 
 // session is one outgoing connection to another go-nx.
@@ -50,6 +52,30 @@ type session struct {
 	held         map[uint16]bool
 	down         map[int32]bool // mouse buttons pressed on the remote
 	nextOp       *uint64
+	lastSent     time.Time // when anything was last sent, for the keep-alive
+
+	// inputMu guards held, down, lastX/lastY and lastSent. The window goroutine
+	// uses them every tick; quitting closes sessions from the tray's goroutine.
+	inputMu sync.Mutex
+}
+
+// liveSessions is every session that has not been closed, so that quitting can
+// close them all whichever goroutine asks.
+var liveSessions sync.Map
+
+// closeAllSessions lets go of everything held on every remote and closes the
+// connections, so each host releases at once instead of waiting out its timers,
+// and gives the close frames a moment to leave before the process exits.
+func closeAllSessions() {
+	n := 0
+	liveSessions.Range(func(k, _ any) bool {
+		k.(*session).close()
+		n++
+		return true
+	})
+	if n > 0 {
+		time.Sleep(150 * time.Millisecond)
+	}
 }
 
 // patch is one changed rectangle, already converted to RGBA.
@@ -60,6 +86,7 @@ type patch struct {
 
 func newSession(cl *remote.Client, nextOp *uint64) *session {
 	s := &session{cl: cl, pending: map[uint64]time.Time{}, held: map[uint16]bool{}, down: map[int32]bool{}, done: make(chan struct{}), nextOp: nextOp}
+	liveSessions.Store(s, struct{}{})
 	go func() {
 		err := cl.Run(context.Background(), s.onFrame, s.onReceipt)
 		s.mu.Lock()
@@ -124,6 +151,7 @@ func (s *session) action(in proto.Input) {
 }
 
 func (s *session) send(in proto.Input) {
+	s.lastSent = time.Now()
 	if err := s.cl.SendInput(in); err != nil {
 		log.Printf("send input: %v", err) // Run reports the broken connection
 	}
@@ -132,13 +160,28 @@ func (s *session) send(in proto.Input) {
 // releaseAll lets go of every key and mouse button this session holds down on
 // the remote, so nothing stays stuck when the tab is left or the window loses focus.
 func (s *session) releaseAll() {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	s.releaseAllLocked()
+}
+
+// releaseAllLocked is releaseAll for a caller that holds inputMu.
+func (s *session) releaseAllLocked() {
+	// Buttons first, then keys with the modifiers last, in an order that does not
+	// depend on how a map happens to iterate.
+	for _, b := range []int32{0, 1, 2} {
+		if s.down[b] {
+			s.send(proto.Input{Kind: proto.KindMouseUp, X: s.lastX, Y: s.lastY, Arg: b})
+			delete(s.down, b)
+		}
+	}
+	codes := make([]uint16, 0, len(s.held))
 	for k := range s.held {
+		codes = append(codes, k)
+	}
+	for _, k := range view.ReleaseOrder(codes) {
 		s.send(proto.Input{Kind: proto.KindKeyUp, Arg: int32(k)})
 		delete(s.held, k)
-	}
-	for b := range s.down {
-		s.send(proto.Input{Kind: proto.KindMouseUp, X: s.lastX, Y: s.lastY, Arg: b})
-		delete(s.down, b)
 	}
 }
 
@@ -150,6 +193,7 @@ func (s *session) setVisible(v bool) {
 }
 
 func (s *session) close() {
+	liveSessions.Delete(s)
 	s.releaseAll()
 	s.cl.Close()
 }
@@ -203,31 +247,40 @@ func (s *session) update(vp ui.Rect, input bool) {
 		s.sized = true
 		fitWindow(fw, fh+ui.BarHeight)
 	}
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
 	if !input || !ebiten.IsFocused() { // never leave keys stuck down on the host
-		s.releaseAll()
+		s.releaseAllLocked()
 		return
 	}
 
 	cx, cy := ebiten.CursorPosition()
-	scale, ox, oy := fit(vp.W, vp.H, fw, fh)
-	x := int32(min(max(int((float64(cx-vp.X)-ox)/scale), 0), fw-1))
-	y := int32(min(max(int((float64(cy-vp.Y)-oy)/scale), 0), fh-1))
-	inside := vp.Contains(cx, cy)
-	if inside && (x != s.lastX || y != s.lastY) {
+	x, y, inside := view.ToHost(cx, cy, vp.X, vp.Y, vp.W, vp.H, fw, fh)
+	// While a button is held the pointer is followed even outside the picture, to
+	// its edge: otherwise a drag that leaves the window ends with the host's
+	// pointer wherever it last was inside, and the release then jumps it.
+	if (inside || len(s.down) > 0) && (x != s.lastX || y != s.lastY) {
 		s.lastX, s.lastY = x, y
 		s.send(proto.Input{Kind: proto.KindMouseMove, X: x, Y: y})
 	}
-	for btn, id := range map[ebiten.MouseButton]int32{
-		ebiten.MouseButtonLeft: 0, ebiten.MouseButtonRight: 1, ebiten.MouseButtonMiddle: 2,
-	} {
-		if inside && inpututil.IsMouseButtonJustPressed(btn) {
-			s.down[id] = true
-			s.action(proto.Input{Kind: proto.KindMouseDown, X: x, Y: y, Arg: id})
+	// A button that has been held a while with the pointer still sends nothing; say
+	// we are alive, or the host lets go of it (it cannot tell a still viewer from a
+	// vanished one).
+	if len(s.down) > 0 && time.Since(s.lastSent) > keepAliveEvery {
+		s.send(proto.Input{Kind: proto.KindMouseMove, X: s.lastX, Y: s.lastY})
+	}
+	for _, b := range []struct {
+		btn ebiten.MouseButton
+		id  int32
+	}{{ebiten.MouseButtonLeft, 0}, {ebiten.MouseButtonRight, 1}, {ebiten.MouseButtonMiddle, 2}} {
+		if inside && inpututil.IsMouseButtonJustPressed(b.btn) {
+			s.down[b.id] = true
+			s.action(proto.Input{Kind: proto.KindMouseDown, X: x, Y: y, Arg: b.id})
 		}
 		// A release always goes through, even outside the picture, for a button we pressed.
-		if s.down[id] && inpututil.IsMouseButtonJustReleased(btn) {
-			delete(s.down, id)
-			s.action(proto.Input{Kind: proto.KindMouseUp, X: x, Y: y, Arg: id})
+		if s.down[b.id] && inpututil.IsMouseButtonJustReleased(b.btn) {
+			delete(s.down, b.id)
+			s.action(proto.Input{Kind: proto.KindMouseUp, X: x, Y: y, Arg: b.id})
 		}
 	}
 	if dx, dy := ebiten.Wheel(); inside {
@@ -238,18 +291,29 @@ func (s *session) update(vp ui.Rect, input bool) {
 			s.action(proto.Input{Kind: proto.KindWheelH, X: x, Y: y, Arg: int32(dx * 120)})
 		}
 	}
-	for k, code := range vk {
+	// Collect what happened to the keys this tick and send it in keyboard order.
+	var events []view.KeyEvent
+	for _, k := range vkKeys {
+		code := vk[k]
 		switch {
 		case inpututil.IsKeyJustPressed(k):
-			s.held[code] = true
-			s.action(proto.Input{Kind: proto.KindKeyDown, Arg: int32(code)})
+			events = append(events, view.KeyEvent{Code: code, Down: true})
 		case inpututil.IsKeyJustReleased(k):
-			delete(s.held, code)
-			s.action(proto.Input{Kind: proto.KindKeyUp, Arg: int32(code)})
+			events = append(events, view.KeyEvent{Code: code, Down: false})
 		case ebiten.IsKeyPressed(k):
 			if d := inpututil.KeyPressDuration(k); d > repeatDelay && d%repeatEvery == 0 {
 				s.send(proto.Input{Kind: proto.KindKeyDown, Arg: int32(code)}) // auto-repeat
 			}
+		}
+	}
+	view.OrderKeyEvents(events)
+	for _, e := range events {
+		if e.Down {
+			s.held[e.Code] = true
+			s.action(proto.Input{Kind: proto.KindKeyDown, Arg: int32(e.Code)})
+		} else {
+			delete(s.held, e.Code)
+			s.action(proto.Input{Kind: proto.KindKeyUp, Arg: int32(e.Code)})
 		}
 	}
 }
@@ -258,7 +322,7 @@ func (s *session) draw(screen *ebiten.Image, vp ui.Rect) {
 	if s.img == nil {
 		return
 	}
-	scale, ox, oy := fit(vp.W, vp.H, s.fw, s.fh)
+	scale, ox, oy := view.Fit(vp.W, vp.H, s.fw, s.fh)
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Scale(scale, scale)
 	op.GeoM.Translate(float64(vp.X)+ox, float64(vp.Y)+oy)
@@ -269,13 +333,6 @@ func (s *session) draw(screen *ebiten.Image, vp ui.Rect) {
 		op.Filter = ebiten.FilterNearest
 	}
 	screen.DrawImage(s.img, op)
-}
-
-// fit returns the scale and offset that show a fw x fh frame centred in a
-// ww x wh window without distorting its aspect ratio. Sizes are physical pixels.
-func fit(ww, wh, fw, fh int) (scale, ox, oy float64) {
-	scale = min(float64(ww)/float64(fw), float64(wh)/float64(fh))
-	return scale, (float64(ww) - float64(fw)*scale) / 2, (float64(wh) - float64(fh)*scale) / 2
 }
 
 // fitWindow sizes the window to show the frame 1:1 if it fits on the monitor,

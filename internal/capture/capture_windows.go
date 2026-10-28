@@ -172,8 +172,9 @@ type Screen struct {
 	old     uintptr
 	pixels  unsafe.Pointer
 
-	pointer atomic.Bool // draw the system pointer into each grab
-	noBlt   atomic.Bool // leave CAPTUREBLT out (layered windows then may not be captured)
+	pointer     atomic.Bool  // draw the system pointer into each grab
+	pointerNote atomic.Value // string: why the last attempt to draw it did nothing, for logs and tests
+	noBlt       atomic.Bool  // leave CAPTUREBLT out (layered windows then may not be captured)
 }
 
 // NewScreen opens the primary monitor.
@@ -342,8 +343,12 @@ func (s *Screen) Grab(dst *tile.Frame) error {
 // it, so it is visible in a viewer that has no pointer of its own.
 func (s *Screen) drawCursor() {
 	info := cursorInfo{Size: uint32(unsafe.Sizeof(cursorInfo{}))}
-	if r, _, _ := getCursor.Call(uintptr(unsafe.Pointer(&info))); r == 0 ||
-		info.Flags&cursorShowing == 0 || info.Cursor == 0 {
+	if r, _, err := getCursor.Call(uintptr(unsafe.Pointer(&info))); r == 0 {
+		s.pointerNote.Store(fmt.Sprintf("GetCursorInfo failed: %v", err))
+		return
+	}
+	if info.Flags&cursorShowing == 0 || info.Cursor == 0 {
+		s.pointerNote.Store(fmt.Sprintf("the pointer is hidden (flags %#x, handle %#x)", info.Flags, info.Cursor))
 		return
 	}
 	var hotX, hotY uint32
@@ -359,7 +364,18 @@ func (s *Screen) drawCursor() {
 		}
 	}
 	x, y := cursor.DrawPosition(s.display.X, s.display.Y, info.Position.X, info.Position.Y, hotX, hotY)
-	drawIcon.Call(s.memDC, uintptr(x), uintptr(y), info.Cursor, 0, 0, 0, 0, diNormal)
+	if r, _, err := drawIcon.Call(s.memDC, uintptr(x), uintptr(y), info.Cursor, 0, 0, 0, 0, diNormal); r == 0 {
+		s.pointerNote.Store(fmt.Sprintf("DrawIconEx failed at %d,%d: %v", x, y, err))
+		return
+	}
+	s.pointerNote.Store(fmt.Sprintf("drew the pointer at %d,%d (hotspot %d,%d, pointer at %d,%d)", x, y, hotX, hotY, info.Position.X, info.Position.Y))
+}
+
+// PointerNote says what the last attempt to draw the pointer did, or why it did
+// nothing. For logs and diagnosis only.
+func (s *Screen) PointerNote() string {
+	n, _ := s.pointerNote.Load().(string)
+	return n
 }
 
 // Close frees the capture surfaces.

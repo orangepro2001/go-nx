@@ -168,6 +168,11 @@ func TestThePointerIsDrawnOnlyWhenAsked(t *testing.T) {
 	win := wintest.New(t, wintest.Options{X: wx, Y: wy, W: ww, H: wh, R: 20, G: 60, B: 100})
 	defer win.Close()
 	const px, py = 400, 300 // the pointer's hotspot, well inside the window
+	showing, undo := wintest.ShowPointer()
+	defer undo()
+	if !showing {
+		t.Skip("the pointer cannot be made to show on this desktop, so there is nothing to composite")
+	}
 	wintest.SetCursorPos(px, py)
 	win.Pump(200 * time.Millisecond)
 
@@ -195,10 +200,9 @@ func TestThePointerIsDrawnOnlyWhenAsked(t *testing.T) {
 		}
 	}
 	if n == 0 {
-		// A desktop with no mouse attached hides the pointer; there is nothing to draw.
-		t.Skip("the pointer is not showing on this desktop, so there is nothing to composite")
+		t.Fatalf("the pointer is showing but nothing was drawn into the grab (%s)", s.PointerNote())
 	}
-	t.Logf("the pointer covers %d pixels in %d,%d - %d,%d", n, minX, minY, maxX, maxY)
+	t.Logf("the pointer covers %d pixels in %d,%d - %d,%d (%s)", n, minX, minY, maxX, maxY, s.PointerNote())
 	if px < minX-1 || px > maxX+1 || py < minY-1 || py > maxY+1 {
 		t.Errorf("the hotspot %d,%d is outside the drawn pointer's box %d,%d - %d,%d", px, py, minX, minY, maxX, maxY)
 	}

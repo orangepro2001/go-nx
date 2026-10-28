@@ -286,8 +286,8 @@ func TestInputControllerReleasesOnTakeoverAndIgnoresStaleSession(t *testing.T) {
 	want := []proto.Input{
 		{Kind: proto.KindKeyDown, Arg: 0xA2},
 		{Kind: proto.KindMouseDown, Arg: 0, X: 12, Y: 34},
+		{Kind: proto.KindMouseUp, Arg: 0, X: proto.NoMove, Y: proto.NoMove}, // buttons first, where the pointer is
 		{Kind: proto.KindKeyUp, Arg: 0xA2},
-		{Kind: proto.KindMouseUp, Arg: 0, X: 12, Y: 34},
 		{Kind: proto.KindKeyDown, Arg: 0xA3},
 		{Kind: proto.KindKeyUp, Arg: 0xA3},
 	}

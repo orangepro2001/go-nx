@@ -84,6 +84,9 @@ var (
 	releaseSemaphore    = kernel32.NewProc("ReleaseSemaphore")
 	closeHandle         = kernel32.NewProc("CloseHandle")
 	setCursorPos        = user32.NewProc("SetCursorPos")
+	loadCursor          = user32.NewProc("LoadCursorW")
+	showCursor          = user32.NewProc("ShowCursor")
+	getCursorInfo       = user32.NewProc("GetCursorInfo")
 	getCursorPos        = user32.NewProc("GetCursorPos")
 	createSolidBrush    = gdi32.NewProc("CreateSolidBrush")
 	deleteObject        = gdi32.NewProc("DeleteObject")
@@ -191,7 +194,8 @@ func New(t *testing.T, o Options) *Window {
 		t.Fatal("wintest: CreateSolidBrush failed")
 	}
 	w.class, _ = syscall.UTF16PtrFromString(name)
-	wc := wndClassEx{wndProc: cb, instance: w.inst, background: w.brush, className: w.class}
+	arrow, _, _ := loadCursor.Call(0, 32512) // IDC_ARROW: without a class cursor the pointer has no shape over the window
+	wc := wndClassEx{wndProc: cb, instance: w.inst, background: w.brush, className: w.class, cursor: arrow}
 	wc.size = uint32(unsafe.Sizeof(wc))
 	if a, _, err := registerClass.Call(uintptr(unsafe.Pointer(&wc))); a == 0 {
 		deleteObject.Call(w.brush)
@@ -319,6 +323,36 @@ func IsWine() bool {
 // SetCursorPos moves the pointer to a screen pixel.
 func SetCursorPos(x, y int) {
 	setCursorPos.Call(uintptr(x), uintptr(y))
+}
+
+// ShowPointer makes sure the system pointer is showing, which a desktop without a
+// mouse (a VM, a CI runner) does not by default: with no mouse installed the
+// pointer's display count starts at -1, and each ShowCursor(TRUE) raises it. It
+// returns whether the pointer is showing now, and a function that puts the count
+// back. Call it on the thread that created the test window.
+func ShowPointer() (showing bool, undo func()) {
+	raised := 0
+	for ; raised < 4 && !pointerShowing(); raised++ {
+		showCursor.Call(1)
+	}
+	return pointerShowing(), func() {
+		for ; raised > 0; raised-- {
+			showCursor.Call(0)
+		}
+	}
+}
+
+func pointerShowing() bool {
+	var ci struct {
+		Size, Flags uint32
+		Cursor      uintptr
+		X, Y        int32
+	}
+	ci.Size = uint32(unsafe.Sizeof(ci))
+	if r, _, _ := getCursorInfo.Call(uintptr(unsafe.Pointer(&ci))); r == 0 {
+		return false
+	}
+	return ci.Flags&1 != 0 // CURSOR_SHOWING
 }
 
 // CursorPos returns the pointer's screen position.

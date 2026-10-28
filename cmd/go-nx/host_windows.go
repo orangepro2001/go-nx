@@ -237,6 +237,9 @@ func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *injec
 		}
 	}
 	h.mu.Unlock()
+	// Win+L locks this PC and the viewer cannot unlock it, so it is refused unless
+	// the setting says otherwise.
+	inputController.SetAllowWinL(h.settings.Bool("allow_win_l", false))
 	for {
 		conn, err := ln.Accept(context.Background())
 		if err != nil {

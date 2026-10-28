@@ -81,7 +81,12 @@ func startTray(h *hostState, onOpen func()) {
 
 // quitApp stops sharing and exits. The tray icon is removed first so it does not
 // linger in the notification area until the mouse passes over it.
+//
+// Every open session is closed first, from whichever goroutine called: the hosts
+// then let go of the keys and buttons this PC was holding on them at once, instead
+// of waiting for a timeout.
 func quitApp() {
+	closeAllSessions()
 	systray.Quit()
 	os.Exit(0)
 }
