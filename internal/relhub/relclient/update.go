@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"go-nx/internal/relhub/relproto"
+	"github.com/orangepro2001/go-nx/internal/relhub/relproto"
 )
 
 // ErrChecksum means a downloaded package does not match its manifest.

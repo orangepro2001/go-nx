@@ -1,4 +1,4 @@
-module go-nx
+module github.com/orangepro2001/go-nx
 
 go 1.27.3
 

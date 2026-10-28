@@ -13,12 +13,12 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"go-nx/internal/capture"
-	"go-nx/internal/inject"
-	"go-nx/internal/proto"
-	"go-nx/internal/remote"
-	"go-nx/internal/trust"
-	"go-nx/internal/ui"
+	"github.com/orangepro2001/go-nx/internal/capture"
+	"github.com/orangepro2001/go-nx/internal/inject"
+	"github.com/orangepro2001/go-nx/internal/proto"
+	"github.com/orangepro2001/go-nx/internal/remote"
+	"github.com/orangepro2001/go-nx/internal/trust"
+	"github.com/orangepro2001/go-nx/internal/ui"
 )
 
 const pairingWindow = 2 * time.Minute

@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"go-nx/internal/relhub/relclient"
-	"go-nx/internal/relhub/relproto"
+	"github.com/orangepro2001/go-nx/internal/relhub/relclient"
+	"github.com/orangepro2001/go-nx/internal/relhub/relproto"
 )
 
 const (
@@ -134,7 +134,7 @@ func New(cfg Config) (*Updater, error) {
 	if err != nil {
 		return nil, fmt.Errorf("update: %w", err)
 	}
-	c, err := relclient.New(cfg.BaseURL, relclient.WithTrustedKeys(keys...), relclient.WithUserAgent("go-nx/"+cfg.Version))
+	c, err := relclient.New(cfg.BaseURL, relclient.WithTrustedKeys(keys...), relclient.WithUserAgent("github.com/orangepro2001/go-nx/"+cfg.Version))
 	if err != nil {
 		return nil, err
 	}

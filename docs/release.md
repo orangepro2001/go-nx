@@ -84,5 +84,5 @@ scripts/ship.sh --dry-run "..."                  # 只看会升到哪个版本�
 
 ## SDK 副本
 
-`internal/relhub/{relproto,relclient}` 是从 `/home/tony/dev/release-publish/pkg/` 复制来的（仅非测试文件，import 路径改为 `go-nx/internal/relhub/...`）。
+`internal/relhub/{relproto,relclient}` 是从 `/home/tony/dev/release-publish/pkg/` 复制来的（仅非测试文件，import 路径改为 `github.com/orangepro2001/go-nx/internal/relhub/...`）。
 不用 `replace` 指向本机源码，是因为 go-nx 有 GitHub 远端，别处 clone 后会因为找不到那个路径而无法构建。SDK 升级时需要手动同步，见 `internal/relhub/README.md`。

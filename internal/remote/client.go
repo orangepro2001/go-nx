@@ -11,9 +11,9 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"go-nx/internal/proto"
-	"go-nx/internal/tile"
-	"go-nx/internal/trust"
+	"github.com/orangepro2001/go-nx/internal/proto"
+	"github.com/orangepro2001/go-nx/internal/tile"
+	"github.com/orangepro2001/go-nx/internal/trust"
 )
 
 // maxFrameBytes bounds one update's stream: the largest frame the protocol allows

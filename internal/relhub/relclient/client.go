@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go-nx/internal/relhub/relproto"
+	"github.com/orangepro2001/go-nx/internal/relhub/relproto"
 )
 
 // Client talks to one release-publish server. It is safe for concurrent use.

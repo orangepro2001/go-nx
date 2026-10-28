@@ -10,7 +10,7 @@ import (
 	"time"
 	"unsafe"
 
-	"go-nx/internal/tile"
+	"github.com/orangepro2001/go-nx/internal/tile"
 )
 
 // These tests need a real interactive Windows desktop and paint on it, so they

@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"time"
 
-	"go-nx/internal/update"
+	"github.com/orangepro2001/go-nx/internal/update"
 )
 
 // version is the release this build was made from. build.sh sets it with

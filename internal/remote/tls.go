@@ -22,7 +22,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"go-nx/internal/trust"
+	"github.com/orangepro2001/go-nx/internal/trust"
 )
 
 const alpn = "go-nx"

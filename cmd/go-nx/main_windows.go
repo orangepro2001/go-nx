@@ -27,12 +27,12 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
-	"go-nx/internal/logging"
-	"go-nx/internal/profiles"
-	"go-nx/internal/remote"
-	"go-nx/internal/trust"
-	"go-nx/internal/ui"
-	"go-nx/internal/update"
+	"github.com/orangepro2001/go-nx/internal/logging"
+	"github.com/orangepro2001/go-nx/internal/profiles"
+	"github.com/orangepro2001/go-nx/internal/remote"
+	"github.com/orangepro2001/go-nx/internal/trust"
+	"github.com/orangepro2001/go-nx/internal/ui"
+	"github.com/orangepro2001/go-nx/internal/update"
 )
 
 const (

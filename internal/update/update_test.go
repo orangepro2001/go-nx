@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"go-nx/internal/relhub/relclient"
-	"go-nx/internal/relhub/relproto"
+	"github.com/orangepro2001/go-nx/internal/relhub/relclient"
+	"github.com/orangepro2001/go-nx/internal/relhub/relproto"
 )
 
 // offer is what the fake release server publishes.

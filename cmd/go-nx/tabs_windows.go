@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"go-nx/internal/remote"
-	"go-nx/internal/ui"
+	"github.com/orangepro2001/go-nx/internal/remote"
+	"github.com/orangepro2001/go-nx/internal/ui"
 )
 
 // tab is one remote session. It is created as soon as a connection is started,

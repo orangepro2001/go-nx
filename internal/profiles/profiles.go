@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 
-	"go-nx/internal/fsutil"
+	"github.com/orangepro2001/go-nx/internal/fsutil"
 )
 
 // Profile is one saved connection. Password may be empty. It is stored in clear

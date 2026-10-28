@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"go-nx/internal/proto"
-	"go-nx/internal/trust"
+	"github.com/orangepro2001/go-nx/internal/proto"
+	"github.com/orangepro2001/go-nx/internal/trust"
 )
 
 // probeHost runs a host that counts how many viewers reached the point of being

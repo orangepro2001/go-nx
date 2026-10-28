@@ -10,7 +10,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
-	"go-nx/internal/profiles"
+	"github.com/orangepro2001/go-nx/internal/profiles"
 )
 
 // Home tab geometry, relative to the area below the tab bar.

@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	"go-nx/internal/profiles"
+	"github.com/orangepro2001/go-nx/internal/profiles"
 )
 
 func TestTabRectsDoNotOverlapAndFit(t *testing.T) {

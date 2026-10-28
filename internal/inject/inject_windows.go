@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"go-nx/internal/proto"
+	"github.com/orangepro2001/go-nx/internal/proto"
 )
 
 var (

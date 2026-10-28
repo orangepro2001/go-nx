@@ -10,9 +10,9 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"go-nx/internal/proto"
-	"go-nx/internal/tile"
-	"go-nx/internal/trust"
+	"github.com/orangepro2001/go-nx/internal/proto"
+	"github.com/orangepro2001/go-nx/internal/tile"
+	"github.com/orangepro2001/go-nx/internal/trust"
 )
 
 // Switching a host from open to strict mode must end the sessions that were let

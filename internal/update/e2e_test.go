@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"go-nx/internal/relhub/relproto"
+	"github.com/orangepro2001/go-nx/internal/relhub/relproto"
 )
 
 // TestE2E runs the updater against a real relhub server. It is skipped unless

@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"go-nx/internal/fsutil"
+	"github.com/orangepro2001/go-nx/internal/fsutil"
 )
 
 // Fingerprint is the hex SHA-256 of a DER certificate.

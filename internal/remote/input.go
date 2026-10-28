@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sync"
 
-	"go-nx/internal/proto"
+	"github.com/orangepro2001/go-nx/internal/proto"
 )
 
 // InputController serializes remote input and ensures a disconnect or takeover

@@ -8,7 +8,7 @@ import (
 	"time"
 	"unsafe"
 
-	"go-nx/internal/proto"
+	"github.com/orangepro2001/go-nx/internal/proto"
 )
 
 // These tests move the real cursor and press real keys, so they only run when

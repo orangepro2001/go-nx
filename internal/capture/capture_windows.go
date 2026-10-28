@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"go-nx/internal/tile"
+	"github.com/orangepro2001/go-nx/internal/tile"
 )
 
 var (

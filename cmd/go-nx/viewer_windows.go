@@ -17,10 +17,10 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/quic-go/quic-go"
 
-	"go-nx/internal/proto"
-	"go-nx/internal/remote"
-	"go-nx/internal/tile"
-	"go-nx/internal/ui"
+	"github.com/orangepro2001/go-nx/internal/proto"
+	"github.com/orangepro2001/go-nx/internal/remote"
+	"github.com/orangepro2001/go-nx/internal/tile"
+	"github.com/orangepro2001/go-nx/internal/ui"
 )
 
 const (

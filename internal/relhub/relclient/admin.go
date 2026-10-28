@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"go-nx/internal/relhub/relproto"
+	"github.com/orangepro2001/go-nx/internal/relhub/relproto"
 )
 
 // PublishRequest describes a release to upload. Set Path, or File with FileName.
