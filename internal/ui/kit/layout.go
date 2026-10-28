@@ -357,3 +357,81 @@ func (d *Divider) Paint(u *UI, cv Canvas) {
 	}
 	cv.FillRect(Rect{d.r.X, d.r.Y, d.r.W, 1}, d.Color)
 }
+
+// Grid lays its children out in rows of equal-width cells: as many columns as fit with
+// each cell at least MinCell wide, the cells then widened to use the whole width. A row is
+// as tall as its tallest child.
+type Grid struct {
+	Gap      float64
+	MinCell  float64
+	Children []Node
+}
+
+func (g Grid) columns(maxW float64) int {
+	if math_IsInf(maxW) || g.MinCell <= 0 {
+		return max(len(visible(g.Children)), 1)
+	}
+	return max(int((maxW+g.Gap)/(g.MinCell+g.Gap)), 1)
+}
+
+func math_IsInf(f float64) bool { return f > 1e300 }
+
+func (g Grid) cell(maxW float64, cols int) float64 {
+	if math_IsInf(maxW) {
+		return g.MinCell
+	}
+	return (maxW - g.Gap*float64(cols-1)) / float64(cols)
+}
+
+// rows measures the children at the cell width and returns the height of each row.
+func (g Grid) rows(u *UI, maxW float64) (kids []Node, cols int, cw float64, heights []float64) {
+	kids = visible(g.Children)
+	cols = g.columns(maxW)
+	cw = g.cell(maxW, cols)
+	for i := 0; i < len(kids); i += cols {
+		h := 0.0
+		for j := i; j < min(i+cols, len(kids)); j++ {
+			h = max(h, kids[j].Measure(u, cw).H)
+		}
+		heights = append(heights, h)
+	}
+	return
+}
+
+func (g Grid) Measure(u *UI, maxW float64) Size {
+	_, cols, cw, hs := g.rows(u, maxW)
+	h := g.Gap * float64(max(len(hs)-1, 0))
+	for _, x := range hs {
+		h += x
+	}
+	return Size{cw*float64(cols) + g.Gap*float64(cols-1), h}
+}
+
+func (g Grid) Place(u *UI, r Rect) {
+	kids, cols, cw, hs := g.rows(u, r.W)
+	y := r.Y
+	for row, h := range hs {
+		for c := 0; c < cols; c++ {
+			i := row*cols + c
+			if i >= len(kids) {
+				break
+			}
+			kids[i].Place(u, Rect{r.X + float64(c)*(cw+g.Gap), y, cw, h})
+		}
+		y += h + g.Gap
+	}
+}
+
+func (g Grid) Paint(u *UI, cv Canvas) {
+	for _, k := range visible(g.Children) {
+		k.Paint(u, cv)
+	}
+}
+
+// EscapeHandler makes Escape do something when nothing focused uses the key. It takes no
+// room and draws nothing.
+type EscapeHandler struct{ OnEscape func() }
+
+func (EscapeHandler) Measure(*UI, float64) Size { return Size{} }
+func (e EscapeHandler) Place(u *UI, r Rect)     { u.OnEscape(e.OnEscape) }
+func (EscapeHandler) Paint(*UI, Canvas)         {}

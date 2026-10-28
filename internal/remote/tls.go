@@ -37,6 +37,7 @@ const (
 	CloseRevoked     = 5 // this device was removed from the host's paired devices
 	CloseBusy        = 6 // too many connections are waiting to be authenticated; try again shortly
 	CloseUnverified  = 7 // the host went back to strict mode and this session had not been verified
+	CloseKicked      = 8 // the person at the host ended this session; the viewer is not barred from connecting again
 )
 
 // ErrHostChanged means a host's certificate differs from the one remembered for its address.

@@ -8,17 +8,21 @@ import (
 	"errors"
 	"log"
 	"net"
+	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/quic-go/quic-go"
 
+	"github.com/orangepro2001/go-nx/internal/app"
 	"github.com/orangepro2001/go-nx/internal/capture"
 	"github.com/orangepro2001/go-nx/internal/inject"
 	"github.com/orangepro2001/go-nx/internal/proto"
 	"github.com/orangepro2001/go-nx/internal/remote"
 	"github.com/orangepro2001/go-nx/internal/trust"
-	"github.com/orangepro2001/go-nx/internal/ui"
+	"github.com/orangepro2001/go-nx/internal/ui/i18n"
 )
 
 const pairingWindow = 2 * time.Minute
@@ -32,9 +36,16 @@ type hostState struct {
 	ID         string // this PC's short fingerprint, for display
 	Err        string // non-empty if hosting could not start
 	Controller string // remote address currently controlling this PC
-	Rejected   string // last device turned away, with the reason
+	CtrlFP     string // its certificate fingerprint, so revoking that device can end its session
+	CtrlOpen   bool   // it was let in without verification (open mode)
+	Rejected   string // address of the last device turned away
+	RejectedBy app.Reason
 	policy     *trust.Policy
+	trusted    *trust.Store
 	settings   *trust.Store
+	seen       map[string]seenPeer    // by remote address: who is connecting and how they were judged
+	notifyFn   atomic.Pointer[func()] // something the interface shows has changed
+	rates      remote.Rates
 	kick       func(code quic.ApplicationErrorCode, reason string) // closes the current controller; set by acceptLoop
 	sessions   *remote.Sessions                                    // which live sessions were let in without verification
 }
@@ -46,35 +57,107 @@ func (h *hostState) fail(err error) {
 	h.mu.Unlock()
 }
 
-// startPairing opens a pairing window with a fresh six-digit code, which the
-// home tab shows and the new device enters as its password.
-func (h *hostState) startPairing() {
+// seenPeer is a connection that is being judged, or was.
+type seenPeer struct {
+	fp       string
+	verified bool
+}
+
+// changed tells the interface that something about the host moved.
+func (h *hostState) changed() {
+	if f := h.notifyFn.Load(); f != nil {
+		(*f)()
+	}
+}
+
+// onChange sets what is called when something about the host moves (a device connects, the
+// mode changes, pairing opens or ends).
+func (h *hostState) onChange(f func()) { h.notifyFn.Store(&f) }
+
+// StartPairing opens a pairing window with a fresh six-digit code, which the This PC page
+// shows and the new device enters as its password.
+func (h *hostState) StartPairing() {
 	h.policy.OpenPairing(trust.NewPairingCode(), pairingWindow)
 	h.mu.Lock()
 	h.Rejected = ""
 	h.mu.Unlock()
 	log.Print("pairing opened")
+	h.changed()
 }
 
-// forgetAll removes every paired device and drops the controller that is
-// connected now, so a revoked device does not keep a session it already has. It
-// returns how many devices were forgotten.
-func (h *hostState) forgetAll() (int, error) {
+// ClosePairing ends the pairing window without a device having used it.
+func (h *hostState) ClosePairing() {
+	h.policy.ClosePairing()
+	log.Print("pairing closed")
+	h.changed()
+}
+
+// RevokeAll removes every paired device and drops the controller that is connected now, so
+// a revoked device does not keep a session it already has. It returns how many devices were
+// forgotten.
+func (h *hostState) RevokeAll() (int, error) {
 	n, err := h.policy.RevokeAll()
 	if h.kick != nil {
 		h.kick(remote.CloseRevoked, "removed from the paired devices")
 	}
 	log.Printf("forgot %d paired device(s)", n)
+	h.changed()
 	return n, err
 }
 
-// info is a snapshot for the home tab.
-func (h *hostState) info() ui.HostInfo {
+// Revoke removes one paired device, ending its session if it has one.
+func (h *hostState) Revoke(fp string) error {
+	err := h.policy.Revoke(fp)
+	h.mu.Lock()
+	controlling := h.CtrlFP == fp
+	h.mu.Unlock()
+	if controlling && h.kick != nil {
+		h.kick(remote.CloseRevoked, "removed from the paired devices")
+	}
+	log.Printf("forgot paired device %s…", fp[:min(12, len(fp))])
+	h.changed()
+	return err
+}
+
+// DisconnectController ends the session of the device controlling this PC.
+func (h *hostState) DisconnectController() {
+	if h.kick != nil {
+		h.kick(remote.CloseKicked, "disconnected from the host")
+	}
+}
+
+// Paired lists the paired devices, most recent first. The store keeps, for each device's
+// fingerprint, the address and the time it paired ("10.0.0.7:5000 2026-10-28 09:30").
+func (h *hostState) Paired() []app.PairedDevice {
+	var out []app.PairedDevice
+	for _, fp := range h.trusted.Keys() {
+		v, _ := h.trusted.Get(fp)
+		d := app.PairedDevice{Fingerprint: fp, Addr: v}
+		if i := strings.LastIndex(v, " "); i > 0 {
+			if j := strings.LastIndex(v[:i], " "); j > 0 {
+				if t, err := time.ParseInLocation("2006-01-02 15:04", v[j+1:], time.Local); err == nil {
+					d.Addr, d.When = v[:j], t
+				}
+			}
+		}
+		if i := strings.LastIndex(d.Addr, ":"); i > 0 { // the source port means nothing to a person
+			d.Addr = d.Addr[:i]
+		}
+		out = append(out, d)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].When.After(out[j].When) })
+	return out
+}
+
+// Info is a snapshot for the interface.
+func (h *hostState) Info() app.HostInfo {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return ui.HostInfo{
+	return app.HostInfo{
 		Err: h.Err, Addrs: h.Addrs, Port: h.Port, Paired: h.policy.TrustedCount(), ID: h.ID,
-		Controller: h.Controller, Rejected: h.Rejected, PairingLeft: h.policy.PairingLeft(), PairingCode: h.policy.PairingCode(),
+		Controller: h.Controller, ControllerVerified: h.Controller != "" && !h.CtrlOpen,
+		Rejected: h.Rejected, RejectedWhy: h.RejectedBy,
+		PairingLeft: h.policy.PairingLeft(), PairingCode: h.policy.PairingCode(),
 		RequireAuth: h.requireAuth(),
 	}
 }
@@ -95,7 +178,7 @@ func (h *hostState) requireAuth() bool {
 // the choice. Going strict ends the sessions that were let in only because the host
 // was open, at once, and returns how many; paired devices and sessions that were
 // verified stay connected, so moving between the modes costs them nothing.
-func (h *hostState) setRequireAuth(on bool) (dropped int) {
+func (h *hostState) SetRequireAuth(on bool) (dropped int) {
 	h.policy.SetRequireAuth(on)
 	v := "0"
 	if on {
@@ -108,16 +191,17 @@ func (h *hostState) setRequireAuth(on bool) (dropped int) {
 		dropped = h.sessions.DropUnverified(remote.CloseUnverified, "the host now requires verification")
 	}
 	log.Printf("mode: %s (ended %d unverified session(s))", map[bool]string{true: "strict", false: "open"}[on], dropped)
+	h.changed()
 	return dropped
 }
 
-func (h *hostState) password() string {
+func (h *hostState) Password() string {
 	pw, _ := h.settings.Get("password")
 	return pw
 }
 
-// setPassword changes the optional password and saves it. Empty disables it.
-func (h *hostState) setPassword(pw string) {
+// SetPassword changes the optional password and saves it. Empty disables it.
+func (h *hostState) SetPassword(pw string) {
 	h.policy.SetPassword(pw)
 	if err := h.settings.Set("password", pw); err != nil {
 		log.Printf("could not save password: %v", err)
@@ -127,36 +211,46 @@ func (h *hostState) setPassword(pw string) {
 // check is the remote.Options.Check callback.
 func (h *hostState) check(fp, addr, password string) (trust.Verdict, error) {
 	v, err := h.policy.Check(fp, addr, password)
-	reason := map[trust.Verdict]string{
-		trust.Untrusted: "not paired", trust.BadPassword: "wrong password", trust.Locked: "locked out",
-	}[v]
 	h.mu.Lock()
 	if v.Admitted() {
-		h.Rejected = ""
+		h.Rejected, h.RejectedBy = "", app.ReasonNone
+		if h.seen == nil {
+			h.seen = map[string]seenPeer{}
+		}
+		h.seen[addr] = seenPeer{fp: fp, verified: v != trust.AllowedOpen}
 	} else {
-		h.Rejected = addr + " (" + reason + ")"
+		h.Rejected = addr
+		h.RejectedBy = map[trust.Verdict]app.Reason{
+			trust.Untrusted: app.ReasonNotPaired, trust.BadPassword: app.ReasonWrongPassword, trust.Locked: app.ReasonLockedOut,
+		}[v]
 	}
 	h.mu.Unlock()
 	if !v.Admitted() {
-		log.Printf("refused %s: %s", addr, reason)
+		log.Printf("refused %s: %s", addr, map[trust.Verdict]string{
+			trust.Untrusted: "not paired", trust.BadPassword: "wrong password", trust.Locked: "locked out",
+		}[v])
+		h.changed()
 	}
 	return v, err
 }
 
-func (h *hostState) tooltip() string {
+// tooltip is the tray icon's text, in the language of the interface.
+func (h *hostState) tooltip(tr *i18n.Translator) string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	switch {
 	case h.Err != "":
-		return "go-nx: hosting unavailable"
+		return tr.T(i18n.KeyTrayTipUnavailable)
 	case h.Controller != "":
-		return "go-nx: controlled by " + h.Controller
+		return tr.T(i18n.KeyTrayTipControlled, "addr", h.Controller)
 	case h.pairingLeft() > 0:
-		return "go-nx: pairing open"
+		return tr.T(i18n.KeyTrayTipPairing)
 	case h.Rejected != "":
-		return "go-nx: refused " + h.Rejected
+		return tr.T(i18n.KeyTrayTipRefused, "what", h.Rejected)
+	case !h.requireAuth():
+		return tr.T(i18n.KeyTrayTipOpenMode)
 	}
-	return "go-nx: ready"
+	return tr.T(i18n.KeyTrayTipReady)
 }
 
 // startHost begins sharing the primary screen in the background.
@@ -165,7 +259,7 @@ func (h *hostState) tooltip() string {
 // interface on port. The addresses the home tab shows are the ones that can reach it.
 func startHost(listen string, port int, rates remote.Rates, display string, layered bool, id tls.Certificate, trusted, settings *trust.Store) *hostState {
 	h := &hostState{
-		policy: trust.NewPolicy(trusted), settings: settings,
+		policy: trust.NewPolicy(trusted), trusted: trusted, settings: settings,
 		ID: trust.Fingerprint(id.Certificate[0])[:16],
 	}
 	h.sessions = remote.NewSessions(h.policy.RequireAuth)
@@ -180,7 +274,7 @@ func startHost(listen string, port int, rates remote.Rates, display string, laye
 	} else {
 		h.Addrs = localIPs()
 	}
-	h.policy.SetPassword(h.password())
+	h.policy.SetPassword(h.Password())
 	h.policy.SetRequireAuth(h.requireAuth())
 	t0 := time.Now()
 	if display == "" {
@@ -205,9 +299,9 @@ func startHost(listen string, port int, rates remote.Rates, display string, laye
 	log.Printf("hosting %dx%d on UDP %s", w, ht, bind)
 	inj := inject.New(w, ht)
 	retargetInjector(inj, scr.Display())
-	rates = rates.Normalized()
-	log.Printf("startup: frame rate %s", rates)
-	go acceptLoop(h, ln, scr, inj, rates)
+	h.rates = rates.Normalized()
+	log.Printf("startup: frame rate %s", h.rates)
+	go acceptLoop(h, ln, scr, inj)
 	return h
 }
 
@@ -222,14 +316,13 @@ func retargetInjector(inj *inject.Injector, d capture.Display) {
 	inj.SetDisplay(int(d.W), int(d.H), int(d.X), int(d.Y), vx, vy, vw, vh)
 }
 
-func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *inject.Injector, rates remote.Rates) {
+func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *inject.Injector) {
 	var (
 		mu              sync.Mutex
 		active          *quic.Conn
 		dd              = proto.NewDedup()
 		inputController = remote.NewInputController(inj)
 		gate            = remote.NewGate(16, 4) // connections waiting to be authenticated: in all, and per address
-		boost           = rates.Boost()
 	)
 	h.mu.Lock()
 	h.kick = func(code quic.ApplicationErrorCode, reason string) {
@@ -250,6 +343,10 @@ func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *injec
 			return
 		}
 		log.Printf("handshake complete with %s", conn.RemoteAddr())
+		// The frame-rate policy is read when a session begins, so a change in the settings
+		// applies to the next connection.
+		rates := h.currentRates()
+		boost := rates.Boost()
 		go func() {
 			err := remote.Serve(context.Background(), conn, scr, inj, dd, remote.Options{
 				FPS:             rates.Base,
@@ -277,11 +374,16 @@ func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *injec
 						active.CloseWithError(remote.CloseReplaced, "replaced by a new client")
 					}
 					active = conn
+					addr := conn.RemoteAddr().String()
 					h.mu.Lock()
-					h.Controller = conn.RemoteAddr().String()
-					h.Rejected = ""
+					h.Controller = addr
+					peer := h.seen[addr]
+					h.CtrlFP, h.CtrlOpen = peer.fp, !peer.verified
+					h.Rejected, h.RejectedBy = "", app.ReasonNone
+					delete(h.seen, addr)
 					h.mu.Unlock()
-					log.Printf("client connected: %s", conn.RemoteAddr())
+					log.Printf("client connected: %s", addr)
+					h.changed()
 				},
 			})
 			if err == remote.ErrDenied {
@@ -292,12 +394,22 @@ func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *injec
 			if active == conn {
 				active = nil
 				h.mu.Lock()
-				h.Controller = ""
+				h.Controller, h.CtrlFP, h.CtrlOpen = "", "", false
 				h.mu.Unlock()
 			}
 			log.Printf("client %s disconnected: %v", conn.RemoteAddr(), err)
+			h.changed()
 		}()
 	}
+}
+
+// currentRates is the frame-rate policy for a session that is starting: the one the program
+// was started with, or a fixed rate if the person chose that in the settings.
+func (h *hostState) currentRates() remote.Rates {
+	if app.FixedFrameRates(h.settings) {
+		return remote.Rates{Base: h.rates.Base}.Normalized()
+	}
+	return h.rates
 }
 
 func localIPs() []string {

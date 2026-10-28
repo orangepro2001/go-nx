@@ -123,12 +123,17 @@ const (
 	KeySessForgotIdentity
 	KeySessForgetFailed
 	KeySessNewTab
+	KeySessStaleOne
+	KeySessStaleOther
+	KeySessFailedOne
+	KeySessFailedOther
 	KeyErrUntrusted
 	KeyErrBadPassword
 	KeyErrLocked
 	KeyErrReplaced
 	KeyErrUnverified
 	KeyErrBusy
+	KeyErrKicked
 	KeyErrRevoked
 	KeyErrNotConfirmed
 	KeyErrHostChanged
@@ -170,5 +175,7 @@ const (
 	KeyTrayTipRefused
 	KeyTrayTipOpenMode
 	KeyQuitHint
+	KeyQuitAsk
+	KeyAlreadyRunning
 	numKeys
 )

@@ -569,3 +569,68 @@ func (s *Segmented) Paint(u *UI, cv Canvas) {
 		}
 	}
 }
+
+// Code is text that is read out and compared character by character — a pairing code, a
+// host ID — set in cells of equal width whatever the font does with digits, and spaces
+// in the text as narrower gaps between groups.
+type Code struct {
+	Text  string
+	Size  float64 // default theme.SizeCode
+	Color Color
+
+	st   text.Style
+	cell float64
+	r    Rect
+}
+
+func (c *Code) style(u *UI) text.Style {
+	s := c.Size
+	if s == 0 {
+		s = theme.SizeCode
+	}
+	return u.Style(s, text.Semibold)
+}
+
+// cellWidth is the widest of the characters a code is made of, so that every one fits.
+func (c *Code) cellWidth(u *UI, st text.Style) float64 {
+	w := 0.0
+	for _, r := range "0123456789ABCDEF" {
+		w = math.Max(w, u.M.Width(string(r), st))
+	}
+	return w + st.Size*0.12
+}
+
+func (c *Code) Measure(u *UI, maxW float64) Size {
+	st := c.style(u)
+	cell := c.cellWidth(u, st)
+	w := 0.0
+	for _, r := range c.Text {
+		if r == ' ' {
+			w += cell * 0.55
+		} else {
+			w += cell
+		}
+	}
+	return Size{w, u.LineH(st)}
+}
+
+func (c *Code) Place(u *UI, r Rect) { c.r, c.st = r, c.style(u); c.cell = c.cellWidth(u, c.st) }
+
+func (c *Code) Paint(u *UI, cv Canvas) {
+	col := c.Color
+	if col.A == 0 {
+		col = u.Pal.Text
+	}
+	lh := u.LineH(c.st)
+	y := c.r.Y + (lh-u.M.LineHeight(c.st))/2
+	x := c.r.X
+	for _, r := range c.Text {
+		if r == ' ' {
+			x += c.cell * 0.55
+			continue
+		}
+		s := string(r)
+		cv.Text(s, x+(c.cell-u.M.Width(s, c.st))/2, y, c.st, col)
+		x += c.cell
+	}
+}

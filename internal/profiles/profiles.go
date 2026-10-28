@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/orangepro2001/go-nx/internal/fsutil"
 )
@@ -17,6 +18,10 @@ type Profile struct {
 	Name     string `json:"name"`
 	Addr     string `json:"addr"`
 	Password string `json:"password,omitempty"`
+	// LastUsed is when this connection was last opened, in seconds since 1970; 0 for
+	// never. Pinned connections are listed first. Both are older files' missing fields.
+	LastUsed int64 `json:"lastUsed,omitempty"`
+	Pinned   bool  `json:"pinned,omitempty"`
 }
 
 // List is the ordered set of saved profiles, persisted to a JSON file.
@@ -120,3 +125,46 @@ func (l *List) Rename(old, name string) (string, error) {
 	l.Items[i].Name = final
 	return final, l.save()
 }
+
+// Touch records that the connection called name was just opened.
+func (l *List) Touch(name string, now time.Time) error {
+	i := l.index(name)
+	if i < 0 {
+		return nil
+	}
+	l.Items[i].LastUsed = now.Unix()
+	return l.save()
+}
+
+// SetPinned pins or unpins the connection called name.
+func (l *List) SetPinned(name string, pinned bool) error {
+	i := l.index(name)
+	if i < 0 || l.Items[i].Pinned == pinned {
+		return nil
+	}
+	l.Items[i].Pinned = pinned
+	return l.save()
+}
+
+// Replace puts p in place of the connection called old, which keeps its place in the list.
+// If p is named like another connection, " (2)", " (3)", ... is appended to the name; the
+// name actually used is returned. Replacing a connection that does not exist adds p.
+func (l *List) Replace(old string, p Profile) (string, error) {
+	i := l.index(old)
+	if i < 0 {
+		return p.Name, l.Upsert(p)
+	}
+	name := p.Name
+	for n := 2; ; n++ {
+		if j := l.index(name); j < 0 || j == i {
+			break
+		}
+		name = fmt.Sprintf("%s (%d)", p.Name, n)
+	}
+	p.Name = name
+	l.Items[i] = p
+	return name, l.save()
+}
+
+// All is the saved connections, in the order they are kept.
+func (l *List) All() []Profile { return l.Items }

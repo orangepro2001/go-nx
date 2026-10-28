@@ -435,3 +435,13 @@ func (u *UI) LineH(st text.Style) float64 {
 	}
 	return math.Round(st.Size * theme.LineLatin)
 }
+
+// ClipRect is the part of the surface that can be seen at this point of placing the tree:
+// inside a Scroll, the part of its window. A node that has far more to draw than fits
+// (a log with thousands of lines) uses it to prepare only what is visible.
+func (u *UI) ClipRect() Rect {
+	if n := len(u.clips); n > 0 {
+		return u.clips[n-1]
+	}
+	return Rect{0, 0, u.size.W, u.size.H}
+}

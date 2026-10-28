@@ -60,7 +60,20 @@ jobs:
       # The interface toolkit draws with Ebiten, so its drawing tests need a display: a virtual
       # one here, the runner's desktop on Windows. (Without a display they skip themselves.)
       - name: interface drawing tests (Ebiten under Xvfb)
-        run: xvfb-run -a -s "-screen 0 1280x800x24" go test -race -count=1 -v ./internal/ui/gfx
+        run: xvfb-run -a -s "-screen 0 1280x800x24" go test -race -count=1 ./internal/ui/gfx ./internal/app
+
+      # Every screen of the interface in three languages and both themes, drawn for real:
+      # kept as an artifact so that a change can be looked at (the fonts are whichever the
+      # runner has; the Windows job draws them with the fonts Windows ships).
+      - name: interface screenshots (Linux)
+        run: |
+          xvfb-run -a -s "-screen 0 1920x1200x24" go run ./tools/uipreview -out "$RUNNER_TEMP/ui-linux" -lang en,zh-Hans,ko -theme dark,light > /dev/null
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ui-linux
+          path: ${{ runner.temp }}/ui-linux
+          if-no-files-found: ignore
 
       # The real programs, as separate processes: nx-host in test mode (a synthetic screen,
       # input only logged) driven the way an application would, paired with nx-probe.
@@ -168,4 +181,39 @@ jobs:
           path: |
             ${{ runner.temp }}/u0-windows.json
             ${{ runner.temp }}/u0-windows.png
+          if-no-files-found: ignore
+
+      # The real go-nx.exe, started on the runner's desktop with a throwaway configuration: it
+      # must reach its first frame, start hosting and not panic. (Nobody clicks anything; what
+      # the interface does when it is used is covered by the tests of package app.)
+      - name: go-nx.exe starts (Windows smoke test)
+        continue-on-error: true
+        run: |
+          export APPDATA="$RUNNER_TEMP/smoke-appdata"
+          mkdir -p "$APPDATA"
+          go build -o "$RUNNER_TEMP/go-nx-smoke.exe" ./cmd/go-nx
+          "$RUNNER_TEMP/go-nx-smoke.exe" -no-update -listen 127.0.0.1 -port 17771 &
+          sleep 10
+          taskkill //F //IM go-nx-smoke.exe || true
+          log="$APPDATA/go-nx/go-nx.log"
+          cat "$log"
+          grep -q "first Draw" "$log"
+          grep -q "host started" "$log"
+          ! grep -qi "panic" "$log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: smoke-windows
+          path: ${{ runner.temp }}/smoke-appdata
+          if-no-files-found: ignore
+
+      # The interface drawn on Windows with Segoe UI, Microsoft YaHei UI and Malgun Gothic.
+      - name: interface screenshots (Windows)
+        continue-on-error: true
+        run: go run ./tools/uipreview -out "$RUNNER_TEMP/ui-windows" -lang en,zh-Hans,ko -theme dark,light -scale 1,1.5 > /dev/null
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ui-windows
+          path: ${{ runner.temp }}/ui-windows
           if-no-files-found: ignore

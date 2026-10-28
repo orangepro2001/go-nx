@@ -1,6 +1,7 @@
 package kit
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -629,3 +630,88 @@ func TestChipsAreReadableInBothThemes(t *testing.T) {
 		}
 	}
 }
+
+func TestGridFillsRowsAndWidensTheCells(t *testing.T) {
+	var cells []*Label
+	h := newHarness(t, 700, 400, func(u *UI) Node {
+		cells = nil
+		g := Grid{Gap: 10, MinCell: 200}
+		for _, s := range []string{"a", "b", "c", "d", "e"} {
+			l := &Label{Text: s}
+			cells = append(cells, l)
+			g.Children = append(g.Children, l)
+		}
+		return g
+	})
+	// 700 wide, cells of at least 200 with 10 gaps: three columns of (700-20)/3.
+	w := (700.0 - 20) / 3
+	if cells[0].r.W != w || cells[1].r.X != w+10 || cells[2].r.X != 2*(w+10) {
+		t.Errorf("first row: %+v %+v %+v", cells[0].r, cells[1].r, cells[2].r)
+	}
+	if cells[3].r.X != 0 || cells[3].r.Y != cells[0].r.H+10 || cells[4].r.X != w+10 {
+		t.Errorf("second row: %+v %+v", cells[3].r, cells[4].r)
+	}
+	// Narrower: two columns, then one.
+	h.u.SetSize(450, 400)
+	h.step(Input{})
+	if cells[1].r.X == 0 || cells[2].r.X != 0 {
+		t.Errorf("at 450 wide: %+v %+v %+v", cells[0].r, cells[1].r, cells[2].r)
+	}
+	h.u.SetSize(150, 400)
+	h.step(Input{})
+	if cells[1].r.X != 0 || cells[1].r.Y == 0 {
+		t.Errorf("at 150 wide the cells should be one above another: %+v %+v", cells[0].r, cells[1].r)
+	}
+}
+
+func TestCodeSetsCharactersInEqualCells(t *testing.T) {
+	var c *Code
+	h := newHarness(t, 400, 100, func(u *UI) Node {
+		c = &Code{Text: "123 456", Size: 32}
+		return Aligned{Child: c}
+	})
+	rec := h.paint()
+	var xs []float64
+	for _, o := range rec.Ops {
+		if o.Kind == "text" {
+			xs = append(xs, o.R.X)
+		}
+	}
+	if len(xs) != 6 {
+		t.Fatalf("drew %d characters, want 6: %v", len(xs), rec.Texts())
+	}
+	// With the fake font every digit is the same width, so the cells are an even step apart
+	// within a group, and the gap between the groups is a little more than a step.
+	step := xs[1] - xs[0]
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-6 }
+	if !near(xs[2]-xs[1], step) || !near(xs[4]-xs[3], step) {
+		t.Errorf("uneven spacing inside groups: %v", xs)
+	}
+	if gapStep := xs[3] - xs[2]; gapStep <= step || gapStep >= 2*step {
+		t.Errorf("the gap between groups is %v for a step of %v", gapStep, step)
+	}
+}
+
+func TestEscapeHandlerAndClipRect(t *testing.T) {
+	escaped := 0
+	var seen Rect
+	h := newHarness(t, 300, 200, func(u *UI) Node {
+		return Stack{Children: []Node{
+			EscapeHandler{OnEscape: func() { escaped++ }},
+			&Scroll{ID: "s", Child: clipSpy{&seen}},
+		}}
+	})
+	h.key(k(KeyEscape))
+	if escaped != 1 {
+		t.Errorf("Escape ran the handler %d times", escaped)
+	}
+	if seen.W != 300 || seen.H != 200 {
+		t.Errorf("a node inside a Scroll saw the visible rect %+v", seen)
+	}
+}
+
+type clipSpy struct{ out *Rect }
+
+func (clipSpy) Measure(*UI, float64) Size { return Size{100, 1000} }
+func (c clipSpy) Place(u *UI, r Rect)     { *c.out = u.ClipRect() }
+func (clipSpy) Paint(*UI, Canvas)         {}

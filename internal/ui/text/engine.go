@@ -208,6 +208,20 @@ func (e *Engine) Ready() bool {
 	return true
 }
 
+// Busy reports whether a font is being opened in the background.
+func (e *Engine) Busy() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for s := range e.pending {
+		for w := range e.pending[s] {
+			if e.pending[s][w] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Loaded lists the font files open now, for diagnostics.
 func (e *Engine) Loaded() []string {
 	e.mu.Lock()

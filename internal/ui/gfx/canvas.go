@@ -30,7 +30,10 @@ var Blur float
 var Color vec4
 
 func Fragment(dst vec4, src vec2, color vec4) vec4 {
-	p := dst.xy - Center
+	// dst.xy is a position on the destination's texture, and an image is only a part of
+	// its texture: the origin has to come off, or a shape lands wherever the image happens
+	// to sit (the first image of a run is at the origin, so a test of one image misses it).
+	p := dst.xy - imageDstOrigin() - Center
 	q := abs(p) - (Half - vec2(Radius, Radius))
 	d := length(max(q, vec2(0, 0))) + min(max(q.x, q.y), 0) - Radius
 	a := clamp(0.5-d, 0, 1)
@@ -67,6 +70,16 @@ func New(eng *text.Engine) (*Canvas, error) {
 	px := ebiten.NewImage(1, 1)
 	px.Fill(color.White)
 	return &Canvas{eng: eng, shade: sh, px: px, icons: map[iconKey]*ebiten.Image{}, scale: 1}, nil
+}
+
+// Close releases the GPU resources: the shader, the pixel and the rasterised icons.
+func (c *Canvas) Close() {
+	c.shade.Deallocate()
+	c.px.Deallocate()
+	for _, img := range c.icons {
+		img.Deallocate()
+	}
+	clear(c.icons)
 }
 
 // Begin sets the image to paint on and the device pixels per logical pixel.

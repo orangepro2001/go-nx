@@ -47,6 +47,13 @@ var mainWindow atomic.Uintptr
 // windowHidden is true while the window is hidden in the tray.
 var windowHidden atomic.Bool
 
+// themeWanted is the title-bar theme asked for before the window existed; the window's
+// handle is only known after its first frame.
+var (
+	themeWanted  atomic.Bool
+	themePending atomic.Bool
+)
+
 // findMainWindow records this process's first visible, unowned top-level window.
 func findMainWindow() {
 	pid := uint32(os.Getpid())

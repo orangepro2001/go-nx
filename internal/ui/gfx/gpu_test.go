@@ -316,3 +316,35 @@ func TestKitPaintsThroughTheRealCanvas(t *testing.T) {
 		}
 	})
 }
+
+// A shape must land in the right place on every image, not only on the first one made: images
+// share a texture, and the shader is given positions on the texture (the first version of the
+// shader forgot to take the image's origin off, and drew nothing on any image but the first).
+func TestShapesLandInTheRightPlaceOnEveryImage(t *testing.T) {
+	eng := newEngine(t, i18n.English)
+	for i := 0; i < 12; i++ {
+		gpu(t, func(*ebiten.Image) {
+			// Several images alive at once, of different sizes, so that they cannot all sit at the origin.
+			var keep []*ebiten.Image
+			for j := 0; j <= i%4; j++ {
+				keep = append(keep, ebiten.NewImage(37+j*11, 29+j*7))
+			}
+			c, img := canvasFor(t, eng, 120, 80, 1)
+			c.RoundRect(kit.Rect{X: 10, Y: 10, W: 100, H: 60}, 8, red)
+			c.StrokeRoundRect(kit.Rect{X: 2, Y: 2, W: 116, H: 76}, 8, 2, kit.Color{G: 255, A: 255})
+			if p := pixel(img, 60, 40); p.R != 255 || p.A != 255 {
+				t.Errorf("image %d: centre = %v", i, p)
+			}
+			if p := pixel(img, 108, 40); p.A < 250 {
+				t.Errorf("image %d: 2 px inside the right edge = %v: the shape is not where it should be", i, p)
+			}
+			if p := pixel(img, 0, 0); p.A != 0 {
+				t.Errorf("image %d: outside = %v", i, p)
+			}
+			if p := pixel(img, 60, 2); p.G < 250 {
+				t.Errorf("image %d: the outline's top edge = %v", i, p)
+			}
+			_ = keep
+		})
+	}
+}

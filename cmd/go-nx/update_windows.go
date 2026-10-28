@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/orangepro2001/go-nx/internal/app"
 	"github.com/orangepro2001/go-nx/internal/update"
 )
 
@@ -59,6 +60,15 @@ func startUpdates(url string, disabled bool) {
 
 func updatesEnabled() bool { return updater != nil }
 
+// updaterOrNil is the updater as the application's service, or a true nil interface when
+// this build does not update.
+func updaterOrNil() app.UpdateService {
+	if updater == nil {
+		return nil
+	}
+	return updateService{}
+}
+
 // versionLabel is how this build is named in the tray.
 func versionLabel() string {
 	if version == "dev" {
@@ -67,45 +77,9 @@ func versionLabel() string {
 	return "v" + version
 }
 
-// updateLabel is the text of the tray's update entry.
-func updateLabel() string {
-	if updater == nil {
-		return ""
-	}
-	return updater.Status().Label()
-}
-
-// homeUpdate is what the home tab's update button shows: its text, and whether a
-// restart into a newer build is waiting (verified and not yet installed, or
-// installed but not yet started). armed means the user already clicked once on
-// it, which restarts go-nx and so ends every remote session.
-func homeUpdate(armed bool) (label string, ready bool) {
-	if updater == nil {
-		return "", false
-	}
-	st := updater.Status()
-	ready = restartPending(st)
-	if ready && armed {
-		return "Click again to restart now", true
-	}
-	return st.Label(), ready
-}
-
 // restartPending reports whether clicking the update button restarts go-nx.
 func restartPending(st update.Status) bool {
 	return st.State == update.Ready || st.State == update.Installed
-}
-
-// updateProblem is why the last update check failed, for the home tab's message
-// line; empty when nothing is wrong.
-func updateProblem() string {
-	if updater == nil {
-		return ""
-	}
-	if st := updater.Status(); st.State == update.Failed && st.Err != nil {
-		return "Update check failed: " + st.Err.Error()
-	}
-	return ""
 }
 
 // updateClicked installs a ready update and restarts into it; an update that is
@@ -141,3 +115,13 @@ func updateClicked() {
 	}
 	quitApp()
 }
+
+// updateService is the updater as the application uses it (app.UpdateService).
+type updateService struct{}
+
+func (updateService) Status() update.Status { return updater.Status() }
+func (updateService) RestartPending() bool  { return restartPending(updater.Status()) }
+
+// Click installs and restarts, or checks; installing hashes and moves a whole executable,
+// so it does not run on the interface's goroutine.
+func (updateService) Click() { go updateClicked() }

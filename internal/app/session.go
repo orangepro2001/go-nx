@@ -1,26 +1,18 @@
-//go:build windows
-
-package main
+package app
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"image"
 	"log"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
-	"github.com/quic-go/quic-go"
 
 	"github.com/orangepro2001/go-nx/internal/proto"
-	"github.com/orangepro2001/go-nx/internal/remote"
 	"github.com/orangepro2001/go-nx/internal/tile"
-	"github.com/orangepro2001/go-nx/internal/ui"
 	"github.com/orangepro2001/go-nx/internal/view"
 )
 
@@ -33,7 +25,7 @@ const (
 
 // session is one outgoing connection to another go-nx.
 type session struct {
-	cl *remote.Client
+	cl Conn
 
 	mu      sync.Mutex
 	rgba    []byte // full-frame RGBA, kept only for whole-frame uploads
@@ -52,6 +44,7 @@ type session struct {
 	held         map[uint16]bool
 	down         map[int32]bool // mouse buttons pressed on the remote
 	nextOp       *uint64
+	changed      func()    // something the interface shows has changed: a picture arrived, the session ended
 	lastSent     time.Time // when anything was last sent, for the keep-alive
 
 	// inputMu guards held, down, lastX/lastY and lastSent. The window goroutine
@@ -63,10 +56,10 @@ type session struct {
 // close them all whichever goroutine asks.
 var liveSessions sync.Map
 
-// closeAllSessions lets go of everything held on every remote and closes the
+// CloseAllSessions lets go of everything held on every remote and closes the
 // connections, so each host releases at once instead of waiting out its timers,
 // and gives the close frames a moment to leave before the process exits.
-func closeAllSessions() {
+func CloseAllSessions() {
 	n := 0
 	liveSessions.Range(func(k, _ any) bool {
 		k.(*session).close()
@@ -84,8 +77,8 @@ type patch struct {
 	pix []byte
 }
 
-func newSession(cl *remote.Client, nextOp *uint64) *session {
-	s := &session{cl: cl, pending: map[uint64]time.Time{}, held: map[uint16]bool{}, down: map[int32]bool{}, done: make(chan struct{}), nextOp: nextOp}
+func newSession(cl Conn, nextOp *uint64, changed func()) *session {
+	s := &session{cl: cl, pending: map[uint64]time.Time{}, held: map[uint16]bool{}, down: map[int32]bool{}, done: make(chan struct{}), nextOp: nextOp, changed: changed}
 	liveSessions.Store(s, struct{}{})
 	go func() {
 		err := cl.Run(context.Background(), s.onFrame, s.onReceipt)
@@ -93,6 +86,7 @@ func newSession(cl *remote.Client, nextOp *uint64) *session {
 		s.err = err
 		s.mu.Unlock()
 		close(s.done)
+		s.notify()
 	}()
 	return s
 }
@@ -102,6 +96,7 @@ func newSession(cl *remote.Client, nextOp *uint64) *session {
 // A session whose tab is not showing keeps no patches, so nothing piles up while
 // it is in the background: its next visit uploads the whole frame once.
 func (s *session) onFrame(f *tile.Frame, dirty []tile.Rect) {
+	defer s.notify()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.fw != f.W || s.fh != f.H || len(dirty)*4 > f.Cols()*f.Rows() || !s.visible.Load() {
@@ -126,10 +121,18 @@ func (s *session) onFrame(f *tile.Frame, dirty []tile.Rect) {
 
 func (s *session) onReceipt(id uint64, status byte) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	delete(s.pending, id)
 	if status != proto.StatusExecuted {
 		s.failed++
+	}
+	s.mu.Unlock()
+	s.notify()
+}
+
+// notify tells the interface that something it shows has changed.
+func (s *session) notify() {
+	if s.changed != nil {
+		s.changed()
 	}
 }
 
@@ -191,23 +194,17 @@ func (s *session) close() {
 	s.cl.Close()
 }
 
-// status describes receipts that look wrong, for the status line.
-func (s *session) status() string {
+// problems counts actions that look wrong: stale ones have had no receipt for a while,
+// failed ones were refused by the host.
+func (s *session) problems() (stale, failed int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	stale := 0
 	for _, t := range s.pending {
 		if time.Since(t) > receiptWarnAt {
 			stale++
 		}
 	}
-	switch {
-	case stale > 0:
-		return fmt.Sprintf("%d action(s) unconfirmed - check the screen before repeating", stale)
-	case s.failed > 0:
-		return fmt.Sprintf("%d action(s) failed on the host", s.failed)
-	}
-	return ""
+	return stale, s.failed
 }
 
 // upload sends pending frame changes to the GPU and reports the frame size.
@@ -231,14 +228,14 @@ func (s *session) upload() (fw, fh int) {
 
 // update uploads new frames and, if input is true, forwards mouse and keyboard
 // input. vp is the area of the window the remote screen is shown in.
-func (s *session) update(vp ui.Rect, input bool) {
+func (s *session) update(vp rect, input bool, window func(fw, fh int)) {
 	fw, fh := s.upload()
 	if fw == 0 || vp.W == 0 {
 		return
 	}
 	if !s.sized {
 		s.sized = true
-		fitWindow(fw, fh+ui.BarHeight)
+		window(fw, fh)
 	}
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
@@ -311,7 +308,7 @@ func (s *session) update(vp ui.Rect, input bool) {
 	}
 }
 
-func (s *session) draw(screen *ebiten.Image, vp ui.Rect) {
+func (s *session) draw(screen *ebiten.Image, vp rect) {
 	if s.img == nil {
 		return
 	}
@@ -328,51 +325,15 @@ func (s *session) draw(screen *ebiten.Image, vp ui.Rect) {
 	screen.DrawImage(s.img, op)
 }
 
-// fitWindow sizes the window to show the frame 1:1 if it fits on the monitor,
-// otherwise as large as fits, keeping the frame's aspect ratio.
-func fitWindow(fw, fh int) {
-	m := ebiten.Monitor()
-	k := m.DeviceScaleFactor()
-	mw, mh := m.Size() // device-independent pixels
-	scale := min(1, float64(mw)*0.95/(float64(fw)/k), float64(mh)*0.9/(float64(fh)/k))
-	ebiten.SetWindowSize(int(float64(fw)/k*scale), int(float64(fh)/k*scale))
-}
+// rect is a rectangle in device pixels.
+type rect struct{ X, Y, W, H int }
 
-// hostChangedMsg explains a changed host certificate and the one deliberate way out.
-const hostChangedMsg = "The host's identity changed (new install, or another PC at this address). " +
-	"If you expect that, press Ctrl+F to forget the saved identity of this host, then Enter to connect and pin the new one. " +
-	"If you do not expect it, do not connect."
+func (r rect) Contains(x, y int) bool { return x >= r.X && x < r.X+r.W && y >= r.Y && y < r.Y+r.H }
 
-// describe turns a connection error into something the user can act on.
-func describe(err error) string {
-	var ae *quic.ApplicationError
-	if errors.As(err, &ae) {
-		switch ae.ErrorCode {
-		case remote.CloseUntrusted:
-			return "This PC is not paired with the host. On the host click \"Pair new device\", then connect again with the 6-digit code it shows as the Password (or enter the host's password)"
-		case remote.CloseBadPassword:
-			return "Wrong password or pairing code"
-		case remote.CloseLocked:
-			return "Too many wrong passwords; try again in a minute"
-		case remote.CloseReplaced:
-			return "Another client took over this host"
-		case remote.CloseUnverified:
-			return "The host switched to strict mode and this PC is not verified. Pair it (the host's \"Pair new device\" shows a code) or enter the host's password, then connect again"
-		case remote.CloseBusy:
-			return "The host is busy with other connection attempts; try again in a moment"
-		case remote.CloseRevoked:
-			return "This PC was removed from the host's paired devices. Pair it again, or enter the host's password"
-		}
-	}
-	if errors.Is(err, errHostNotConfirmed) {
-		return "You did not confirm this host's identity, so nothing was sent to it"
-	}
-	if strings.Contains(err.Error(), remote.ErrHostChanged.Error()) {
-		return hostChangedMsg
-	}
-	var idle *quic.IdleTimeoutError
-	if errors.As(err, &idle) {
-		return "Connection timed out (is the address right and UDP open?)"
-	}
-	return err.Error()
+// holding reports whether a key or a mouse button is held down on the remote PC, so that
+// the interface must keep running to repeat the key and keep the button alive.
+func (s *session) holding() bool {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	return len(s.held) > 0 || len(s.down) > 0
 }
