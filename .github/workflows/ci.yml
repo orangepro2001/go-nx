@@ -57,6 +57,11 @@ jobs:
       - name: test (race, coverage)
         run: go test -race -cover ./...
 
+      # The interface toolkit draws with Ebiten, so its drawing tests need a display: a virtual
+      # one here, the runner's desktop on Windows. (Without a display they skip themselves.)
+      - name: interface drawing tests (Ebiten under Xvfb)
+        run: xvfb-run -a -s "-screen 0 1280x800x24" go test -race -count=1 -v ./internal/ui/gfx
+
       # The real programs, as separate processes: nx-host in test mode (a synthetic screen,
       # input only logged) driven the way an application would, paired with nx-probe.
       - name: nx-host and nx-probe end to end
