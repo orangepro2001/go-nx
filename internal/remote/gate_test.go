@@ -81,21 +81,22 @@ func TestServeTurnsAwayConnectionsWhenGateIsFull(t *testing.T) {
 	defer silent.CloseWithError(0, "")
 	time.Sleep(200 * time.Millisecond) // let Serve take the only slot
 
-	// Second connection: a normal viewer. It must be refused as busy.
+	// Second connection: a normal viewer. It must be refused as busy. Depending
+	// on timing the host's close reaches the viewer while it is still dialling or
+	// only once it is running, so either call may report it.
 	c, err := Dial(ctx, ln.Addr().String(), identity(t), hostsStore(t), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	done := make(chan error, 1)
-	go func() { done <- c.Run(ctx, func(*tile.Frame, []tile.Rect) {}, nil) }()
-	select {
-	case err := <-done:
-		var ae *quic.ApplicationError
-		if !errors.As(err, &ae) || ae.ErrorCode != CloseBusy {
-			t.Fatalf("second viewer got %v, want application close code CloseBusy", err)
+	if err == nil {
+		defer c.Close()
+		done := make(chan error, 1)
+		go func() { done <- c.Run(ctx, func(*tile.Frame, []tile.Rect) {}, nil) }()
+		select {
+		case err = <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("second viewer was not turned away")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("second viewer was not turned away")
+	}
+	var ae *quic.ApplicationError
+	if !errors.As(err, &ae) || ae.ErrorCode != CloseBusy {
+		t.Fatalf("second viewer got %v, want application close code CloseBusy", err)
 	}
 }
