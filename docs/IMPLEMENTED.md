@@ -52,7 +52,7 @@
 | 配对 | 部分（2026-10-28 改） | 主机上点按钮开 2 分钟窗口并显示**一次性 6 位码**；新设备把它填在 Password 里才配对，成功即关窗，全体来源累计错 10 次也关窗。无码模式（`StartPairing`）保留给不经界面的流程。**仍没有** 指纹核对、本机确认弹窗 | `internal/trust/policy.go`（`OpenPairing`、`NewPairingCode`）、`cmd/go-nx/host_windows.go`、`internal/ui/home.go` |
 | 密码 | 部分 | 可选。错误次数**按来源 IP** 计（端口不算）：10 分钟内错 5 次锁该来源 1 分钟，连续锁定每次加倍，上限 15 分钟；安静 10 分钟后失败计数清零；输对一次清除该来源的记录；来源表上限 1024 条。配对过的设备不受影响。（2026-10-28 改；此前是全局 1 分钟/5 次、不衰减） | `internal/trust/policy.go` |
 | 未认证连接上限 | 已实现（2026-10-28） | `remote.Gate`：等待认证的连接总数 ≤ 16、同一 IP ≤ 4，超出的以 `CloseBusy`(6) 拒绝；Hello 10 s 内未到也会放弃。QUIC 握手本身的并发未限制 | `internal/remote/gate.go`、`host.go`、`cmd/go-nx/host_windows.go` |
-| 首次连接 | 风险 | 密码在校验主机指纹之前就发出（TOFU 首次） | `internal/remote/client.go:45` |
+| 首次连接 | 已处理（2026-10-28；此前密码在校验指纹前就发出） | 控制端界面连接未固定的主机时，先 `remote.Probe`（只握手取指纹，不发 Hello、不写任何东西），标签页显示该主机自报的 16 位 ID，让用户与主机主页的 `ID:` 比对，按 Enter 才 `PinHost` 并正常连接，Esc / 关闭标签 / 2 分钟无应答都算拒绝；密码或配对码只会发给已固定的身份。**不经界面的调用者**（`remote.Dial` 直接用）仍是首次信任。界面部分未在 Windows 上跑过（ACCEPTANCE H17） | `internal/remote/tls.go`（`Probe`、`PinHost`）、`cmd/go-nx/tabs_windows.go`、`main_windows.go` |
 | 撤销已信任设备 | 部分（2026-10-28） | `Store.Delete/Clear/Keys`、`Policy.Revoke/RevokeAll`；主页新增两次点击确认的 "Forget paired devices"，会清空配对并以 `CloseRevoked`(5) 断开当前控制者。**还没有逐设备列表**（只能全部忘记） | `internal/trust`、`internal/ui/home.go`、`cmd/go-nx/host_windows.go` |
 | 忘记主机身份（控制端） | 已实现（2026-10-28） | 主机证书变化时仍硬失败（`ErrHostChanged`）；用户确认后在该标签页按 `Ctrl+F` 忘记旧指纹，再 `Enter` 连接并重新固定。此前提示的"手改 hosts.json"在程序运行时无效 | `remote.ForgetHost`、`cmd/go-nx/main_windows.go`、`viewer_windows.go` |
 | 凭据存储 | **明文** | 主机密码在 `settings.json`；连接密码在 `connections.json`；`identity.pem` 私钥未加密；Windows 上 0600 无效 | `host_windows.go:88-95`、`internal/profiles/profiles.go:12-17` |

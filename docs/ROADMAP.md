@@ -22,7 +22,7 @@
 | # | 阶段 | 内容 | 状态 |
 |---|---|---|---|
 | 0 | 基线与可信的现状 | 测试基线；`IMPLEMENTED.md` / `ACCEPTANCE.md` / `README.md`；设计文档加"非实现"横幅；CI 与 Windows 冒烟 spike（结论：windows-latest 可做 GDI 抓屏与 SendInput 冒烟，见 `ACCEPTANCE.md` §1b） | ☑ |
-| 1 | 安全基线 | ☑ 恶意主机上限 + fuzz（`proto`、`tile`）　☑ JSON 原子写 + 损坏文件隔离　☑ 撤销设备（全部忘记 + 忘记主机；逐设备列表待做）　☑ 按来源限流 + 未认证连接上限　☐ 监听地址可选　☑ 一次性配对码　☑ 默认开启认证（设置过的保持原值，从没设置过的变为开）　☐ 指纹核对，首次连接校验前不发密码　☐ 密码哈希 + DPAPI | ◐ |
+| 1 | 安全基线 | ☑ 恶意主机上限 + fuzz（`proto`、`tile`）　☑ JSON 原子写 + 损坏文件隔离　☑ 撤销设备（全部忘记 + 忘记主机；逐设备列表待做）　☑ 按来源限流 + 未认证连接上限　☐ 监听地址可选　☑ 一次性配对码　☑ 默认开启认证（设置过的保持原值，从没设置过的变为开）　☑ 首次连接指纹核对（校验前不发密码）　☐ 密码哈希 + DPAPI | ◐ |
 | 2 | 协议规范与版本协商 | `docs/protocol.md`；v0 冻结（含 `MsgText` / `WheelH`）+ 金样向量；新 ALPN `go-nx/1`（版本 + 能力位、长度前缀、未知消息可跳过）；兼容矩阵测试 | ☐ |
 | 3 | 回移 NightDesk 修复 | `backport-ledger.md`；B0 模块改名 `github.com/orangepro2001/go-nx`；B1 文本 / 横向滚轮；B2 多显示器 + per-monitor DPI + 帧内光标 + `VIRTUALDESK` + 尺寸下发；B3 `pinnedClientTLS` / `FPSFn` / 回调；B4 合成源 + `nx-probe`；B5 `mobile/` + `nx-host` + AAR 脚本；像素 / 鼠标 / 光标几何契约测试 | ☐ |
 | 4 | 输入与捕获可靠性 | 按键顺序确定；异步发送；退出与断线释放；`Grab` 失败重建；`Win+L` 策略；键表补全；坐标往返属性测试；自更新加固 | ☐ |

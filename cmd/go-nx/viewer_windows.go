@@ -307,6 +307,9 @@ func describe(err error) string {
 			return "This PC was removed from the host's paired devices. Pair it again, or enter the host's password"
 		}
 	}
+	if errors.Is(err, errHostNotConfirmed) {
+		return "You did not confirm this host's identity, so nothing was sent to it"
+	}
 	if strings.Contains(err.Error(), remote.ErrHostChanged.Error()) {
 		return hostChangedMsg
 	}

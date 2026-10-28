@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net"
 	"strings"
@@ -25,7 +26,22 @@ type tab struct {
 	hostChanged bool   // the error is a changed host certificate, which Ctrl+F can clear
 	sess        *session
 	dial        chan connResult
+
+	confirmReq chan *hostConfirm // the dial goroutine asks the user through this
+	confirm    *hostConfirm      // the question being shown, or nil
+	cancel     chan struct{}     // closed when the tab is closed while connecting
 }
+
+// hostConfirm is a first-time host waiting for the user to compare its
+// fingerprint with the one the host displays. The answer goes to reply.
+type hostConfirm struct {
+	fp    string
+	reply chan bool
+}
+
+// errHostNotConfirmed means the user declined (or never answered) the prompt for
+// a host seen for the first time. Nothing was sent to it.
+var errHostNotConfirmed = errors.New("host identity not confirmed")
 
 type connResult struct {
 	cl  *remote.Client
@@ -91,7 +107,27 @@ var dialWaits = []time.Duration{2 * time.Second, 3 * time.Second, 4 * time.Secon
 func (a *app) startDial(t *tab) {
 	t.state, t.err, t.hostChanged = ui.TabConnecting, "", false
 	t.dial = make(chan connResult, 1)
-	go func(addr, password string, out chan<- connResult) {
+	t.confirmReq, t.confirm, t.cancel = make(chan *hostConfirm, 1), nil, make(chan struct{})
+	go func(addr, password string, out chan<- connResult, ask chan<- *hostConfirm, cancel <-chan struct{}) {
+		// A host seen for the first time is identified and confirmed by the user
+		// before anything is sent to it: the password or pairing code only ever goes
+		// to a pinned identity.
+		if _, pinned := remote.PinnedFingerprint(a.hosts, addr); !pinned {
+			fp, err := a.probe(addr)
+			if err != nil {
+				out <- connResult{nil, err}
+				return
+			}
+			if !askHostConfirm(ask, cancel, fp) {
+				out <- connResult{nil, errHostNotConfirmed}
+				return
+			}
+			if err := remote.PinHost(a.hosts, addr, fp); err != nil {
+				out <- connResult{nil, err}
+				return
+			}
+			log.Printf("pinned %s after the user confirmed %s", addr, shortID(fp))
+		}
 		var cl *remote.Client
 		var err error
 		for n, wait := range dialWaits {
@@ -105,14 +141,64 @@ func (a *app) startDial(t *tab) {
 			}
 		}
 		out <- connResult{cl, err}
-	}(t.addr, t.password, t.dial)
+	}(t.addr, t.password, t.dial, t.confirmReq, t.cancel)
 }
+
+// probe learns the host's fingerprint, retrying like a normal dial because the
+// path may take a few seconds to come up.
+func (a *app) probe(addr string) (string, error) {
+	var fp string
+	var err error
+	for n, wait := range dialWaits {
+		ctx, cancel := context.WithTimeout(context.Background(), wait)
+		fp, err = remote.Probe(ctx, addr, a.id)
+		cancel()
+		log.Printf("probe %s attempt %d/%d: %v", addr, n+1, len(dialWaits), err)
+		if err == nil {
+			return fp, nil
+		}
+	}
+	return "", err
+}
+
+// hostConfirmWait is how long the prompt waits for an answer before it counts as no.
+const hostConfirmWait = 2 * time.Minute
+
+// askHostConfirm puts the question to the UI and waits for the answer. A tab
+// that is closed, or an answer that never comes, is a no.
+func askHostConfirm(ask chan<- *hostConfirm, cancel <-chan struct{}, fp string) bool {
+	req := &hostConfirm{fp: fp, reply: make(chan bool, 1)}
+	select {
+	case ask <- req:
+	case <-cancel:
+		return false
+	}
+	select {
+	case ok := <-req.reply:
+		return ok
+	case <-cancel:
+		return false
+	case <-time.After(hostConfirmWait):
+		return false
+	}
+}
+
+// shortID is the fingerprint prefix the host's home tab shows as its ID, which
+// is what the user compares.
+func shortID(fp string) string { return fp[:min(16, len(fp))] }
 
 // pollTabs moves tabs between connecting, live and error as results arrive.
 func (a *app) pollTabs() {
 	for i, t := range a.tabs {
 		switch t.state {
 		case ui.TabConnecting:
+			if t.confirm == nil {
+				select {
+				case req := <-t.confirmReq:
+					t.confirm = req
+				default:
+				}
+			}
 			select {
 			case r := <-t.dial:
 				if r.err != nil {
@@ -169,6 +255,7 @@ func (a *app) closeTab(i int) {
 	case t.sess != nil:
 		t.sess.close()
 	case t.state == ui.TabConnecting:
+		close(t.cancel)                 // releases a dial that is waiting on the fingerprint prompt
 		go func(ch <-chan connResult) { // a late connection must not leak
 			if r := <-ch; r.cl != nil {
 				r.cl.Close()

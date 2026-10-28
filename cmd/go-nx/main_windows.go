@@ -412,6 +412,17 @@ func (a *app) updateTab(t *tab) {
 			}
 		}
 		t.sess.update(a.viewport(), true)
+	case ui.TabConnecting:
+		if t.confirm != nil {
+			switch {
+			case inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeyNumpadEnter):
+				t.confirm.reply <- true
+				t.confirm = nil
+			case inpututil.IsKeyJustPressed(ebiten.KeyEscape):
+				t.confirm.reply <- false
+				t.confirm = nil
+			}
+		}
 	case ui.TabError:
 		if t.hostChanged && ebiten.IsKeyPressed(ebiten.KeyControl) && inpututil.IsKeyJustPressed(ebiten.KeyF) {
 			if err := remote.ForgetHost(a.hosts, t.addr); err != nil {
@@ -571,6 +582,12 @@ func (a *app) Draw(screen *ebiten.Image) {
 		t.sess.draw(screen, vp)
 	} else {
 		msg, c := "Connecting to "+t.addr+" ...", ui.ColWarn
+		if t.confirm != nil {
+			msg = "First connection to " + t.addr + ". This host says its ID is " + shortID(t.confirm.fp) + ". " +
+				"On that PC's go-nx home tab the line \"ID:\" must show exactly the same characters. " +
+				"If it does, press Enter to trust this PC and connect; press Esc to cancel. " +
+				"Nothing has been sent to it yet, not even your password or pairing code."
+		}
 		if t.state == ui.TabError {
 			msg, c = t.err+". Press Enter to reconnect, or close this tab.", ui.ColBad
 		}

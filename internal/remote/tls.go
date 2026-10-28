@@ -7,11 +7,13 @@
 package remote
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -121,6 +123,48 @@ func (p *pinRecorder) commit(hosts *trust.Store) error {
 func Listen(addr string, id tls.Certificate) (*quic.Listener, error) {
 	return quic.ListenAddr(addr, serverTLS(id), quicConfig())
 }
+
+// Probe connects to addr only far enough to learn the fingerprint of the
+// certificate the host presents, then hangs up. Nothing is sent over the session
+// and nothing is stored: no Hello, so no password, and no pin. An interactive
+// caller uses it for a host that is not pinned yet, lets the user compare the
+// fingerprint with the one the host displays, and only then calls PinHost and
+// Dial, so a password only ever goes to an identity the user has confirmed.
+func Probe(ctx context.Context, addr string, id tls.Certificate) (string, error) {
+	var seen atomic.Value // string
+	cfg := &tls.Config{
+		Certificates:       []tls.Certificate{id},
+		InsecureSkipVerify: true, // nothing is trusted or sent; the caller verifies the fingerprint
+		VerifyPeerCertificate: func(raw [][]byte, _ [][]*x509.Certificate) error {
+			if len(raw) == 0 {
+				return errors.New("host sent no certificate")
+			}
+			seen.Store(trust.Fingerprint(raw[0]))
+			return nil
+		},
+		NextProtos: []string{alpn},
+		MinVersion: tls.VersionTLS13,
+	}
+	conn, err := quic.DialAddr(ctx, addr, cfg, quicConfig())
+	if err != nil {
+		return "", err
+	}
+	conn.CloseWithError(0, "")
+	fp, _ := seen.Load().(string)
+	if fp == "" {
+		return "", errors.New("host sent no certificate")
+	}
+	return fp, nil
+}
+
+// PinnedFingerprint is the fingerprint remembered for the host at addr.
+func PinnedFingerprint(hosts *trust.Store, addr string) (string, bool) {
+	return hosts.Get(hostOf(addr))
+}
+
+// PinHost remembers fp as the identity of the host at addr; later connections
+// must present it. Call it after the user has confirmed the fingerprint.
+func PinHost(hosts *trust.Store, addr, fp string) error { return hosts.Set(hostOf(addr), fp) }
 
 // ForgetHost drops the fingerprint remembered for the host at addr, so the next
 // connection to it pins whatever certificate it presents. Use it only after the
