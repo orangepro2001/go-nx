@@ -233,7 +233,11 @@ func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *injec
 				InputController: inputController,
 				Gate:            gate,
 				Sessions:        h.sessions,
-				OnError:         func(err error) { log.Printf("session cleanup: %v", err) },
+				HostName:        remote.ComputerName(),
+				OnPeer: func(p remote.PeerInfo) {
+					log.Printf("viewer %s speaks control protocol v%d (name %q)", conn.RemoteAddr(), p.Version, p.Name)
+				},
+				OnError: func(err error) { log.Printf("session cleanup: %v", err) },
 				OnAuthed: func() {
 					mu.Lock()
 					defer mu.Unlock()

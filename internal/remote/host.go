@@ -69,6 +69,23 @@ type Options struct {
 	InputController *InputController // shared controller for releasing inputs across sessions
 	Gate            *Gate            // optional cap on connections awaiting authentication
 	Sessions        *Sessions        // optional: lets the host end sessions that were let in without verification
+
+	// HostName is this host's display name, sent to a v1 viewer in the welcome.
+	HostName string
+	// Caps are abilities to advertise in addition to the ones Serve works out from
+	// the injector (text, horizontal wheel); the caller adds what only it knows,
+	// such as a source that draws the pointer into the frames.
+	Caps proto.Caps
+	// OnPeer, if set, is called once the viewer has been admitted, with what it
+	// introduced itself as (the name is empty for a v0 viewer).
+	OnPeer func(PeerInfo)
+}
+
+// PeerInfo is what a viewer told the host about itself.
+type PeerInfo struct {
+	Version int    // control-protocol version in use: 0 or 1
+	Name    string // the viewer's display name; empty for v0
+	Caps    proto.Caps
 }
 
 // minRate is the slowest link we still expect to deliver a frame on. A frame's
@@ -131,8 +148,12 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 	if err != nil {
 		return err
 	}
+	cd, err := codecFor(conn.ConnectionState().TLS.NegotiatedProtocol)
+	if err != nil {
+		return err
+	}
 	ctrl.SetReadDeadline(time.Now().Add(10 * time.Second))
-	hello, err := proto.ReadMsg(ctrl)
+	hello, err := cd.readClientMsg(ctrl)
 	if err != nil {
 		return err
 	}
@@ -189,16 +210,25 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 		}()
 	}
 
-	var lastAck atomic.Uint32
-	readErr := make(chan error, 1)
-	go func() { readErr <- readControl(ctrl, input, dd, &lastAck) }()
-
 	w, h := src.Size()
 	if !proto.ValidFrameSize(w, h) {
 		// A viewer would refuse the frames, so say so here instead of streaming them.
 		return fmt.Errorf("screen %dx%d is outside what the protocol carries (at most %d px a side, %d px in all)",
 			w, h, proto.MaxFrameDim, proto.MaxFramePixels)
 	}
+	if opt.OnPeer != nil {
+		opt.OnPeer(PeerInfo{Version: cd.version(), Name: hello.Name, Caps: hello.Caps})
+	}
+	if err := cd.writeWelcome(ctrl, proto.WelcomeV1{
+		Version: proto.Version1, Caps: hostCaps(inj, opt), W: uint16(w), H: uint16(h), Name: opt.HostName,
+	}); err != nil {
+		return err
+	}
+
+	var lastAck atomic.Uint32
+	readErr := make(chan error, 1)
+	go func() { readErr <- readControl(ctrl, cd, input, dd, &lastAck) }()
+
 	cur := tile.NewFrame(w, h)
 	var diff tile.Differ
 	pending := map[int]struct{}{}
@@ -267,9 +297,9 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 	}
 }
 
-func readControl(ctrl *quic.Stream, input inputSink, dd *proto.Dedup, lastAck *atomic.Uint32) error {
+func readControl(ctrl *quic.Stream, cd codec, input inputSink, dd *proto.Dedup, lastAck *atomic.Uint32) error {
 	for {
-		m, err := proto.ReadMsg(ctrl)
+		m, err := cd.readClientMsg(ctrl)
 		if err != nil {
 			return err
 		}
@@ -277,11 +307,11 @@ func readControl(ctrl *quic.Stream, input inputSink, dd *proto.Dedup, lastAck *a
 		case proto.MsgAck:
 			lastAck.Store(m.Seq)
 		case proto.MsgInput:
-			if err := runOp(ctrl, dd, m.Input.OpID, func() error { return input.Inject(m.Input) }); err != nil {
+			if err := runOp(ctrl, cd, dd, m.Input.OpID, func() error { return input.Inject(m.Input) }); err != nil {
 				return err
 			}
 		case proto.MsgText:
-			if err := runOp(ctrl, dd, m.OpID, func() error { return input.InjectText(m.Text) }); err != nil {
+			if err := runOp(ctrl, cd, dd, m.OpID, func() error { return input.InjectText(m.Text) }); err != nil {
 				return err
 			}
 		}
@@ -292,7 +322,7 @@ func readControl(ctrl *quic.Stream, input inputSink, dd *proto.Dedup, lastAck *a
 // opID 0 is fire-and-forget: it runs every time and gets no receipt. A repeated
 // opID (a retry after a lost receipt) is not run again; its first receipt is
 // sent again.
-func runOp(ctrl *quic.Stream, dd *proto.Dedup, opID uint64, run func() error) error {
+func runOp(ctrl *quic.Stream, cd codec, dd *proto.Dedup, opID uint64, run func() error) error {
 	if opID == 0 {
 		_ = run()
 		return nil
@@ -305,5 +335,15 @@ func runOp(ctrl *quic.Stream, dd *proto.Dedup, opID uint64, run func() error) er
 		}
 		dd.Put(opID, status)
 	}
-	return proto.WriteReceipt(ctrl, opID, status)
+	return cd.writeReceipt(ctrl, opID, status)
+}
+
+// hostCaps is what this host tells a v1 viewer it can do: what the injector is
+// able to do, plus whatever the caller adds.
+func hostCaps(inj Injector, opt Options) proto.Caps {
+	caps := proto.CapWheelH | opt.Caps
+	if _, ok := inj.(TextInjector); ok {
+		caps |= proto.CapText
+	}
+	return caps
 }

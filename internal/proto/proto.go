@@ -67,6 +67,9 @@ type Msg struct {
 	Input    Input  // MsgInput
 	OpID     uint64 // MsgText
 	Text     string // MsgText
+	Version  uint16 // MsgHello in v1
+	Caps     Caps   // MsgHello in v1
+	Name     string // MsgHello in v1
 }
 
 func WriteHello(w io.Writer, password string) error {

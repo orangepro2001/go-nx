@@ -34,8 +34,8 @@
 |---|---|---|---|
 | 传输 | 已实现 | QUIC（quic-go）+ TLS 1.3，ALPN 固定 `"go-nx"`，keep-alive 5s / idle 45s | `internal/remote/tls.go:22,41-42` |
 | 流划分 | 已实现 | 一条双向控制流（Hello/Ack/Input/Receipt）+ 每帧一条主机发起的单向流。**没有** S0/S1/S2/S4 分流 | `internal/proto/proto.go:3-6,18-24` |
-| 对恶意主机的上限 | 已实现（2026-10-28） | 公布的帧尺寸 ≤ 16384 px/边、≤ 2²⁵ 像素，否则结束会话（`proto.ErrFrameSize`）；单个更新流 ≤ 约 138 MiB，超出结束会话；调色板 RLE 展开前校验；raw tile 的 deflate 最多读 size+1 字节；每帧记录数 ≤ tile 数；更新流 15 s 无数据即放弃；主机自己的屏幕超出上限时 `Serve` 直接报错 | `proto.go`（`MaxFrameDim`、`ValidFrameSize`）、`client.go`（`stallReader`）、`tile.go`（`decodePalette`、`Decode`）、`host.go` |
-| 版本/能力协商 | **未实现** | Hello 只有 `type, pwLen, password`；未知消息类型直接结束会话 | `proto.go:18,98-137` |
+| 对恶意主机的上限 | 已实现（2026-10-28） | 公布的帧尺寸 ≤ 16384 px/边、≤ 2²⁵ 像素，否则结束会话（`proto.ErrFrameSize`）；单个更新流 ≤ 132 MiB，超出结束会话；调色板 RLE 展开前校验；raw tile 的 deflate 最多读 size+1 字节；每帧记录数 ≤ tile 数；更新流 15 s 无数据即放弃；主机自己的屏幕超出上限时 `Serve` 直接报错 | `proto.go`（`MaxFrameDim`、`ValidFrameSize`）、`client.go`（`stallReader`）、`tile.go`（`decodePalette`、`Decode`）、`host.go` |
+| 版本/能力协商 | **已实现**（2026-10-28；此前没有） | 版本由 TLS 的 ALPN 决定：`go-nx/1`（v1，带长度前缀的控制帧，未知类型可跳过、多余尾字节忽略、主机放行后发 Welcome 通告能力 / 屏幕尺寸 / 名字）和 `go-nx`（v0，冻结，收入了 `MsgText` 与横向滚轮）。主机两个都提供且优先 v1，查看器两个都提供，所以新旧任意组合都能连上。能力位：`CapText`、`CapWheelH` 已使用，`CapResize`、`CapCursor` 已预留。**没有**能力的主机上 `Client.SendText` 返回 `ErrUnsupported`，不会再把老主机的会话弄断。完整规范与兼容矩阵见 `protocol.md` | `internal/proto/v1.go`、`internal/remote/codec.go`、`docs/protocol.md` |
 | 输入种类 | 已实现 | 鼠标移动/按下/抬起、竖直滚轮、**横向滚轮**（`KindWheelH`）、按键按下/抬起（Windows VK，`0x100` 位表示扩展键）、**Unicode 文本**（`MsgText`，主机用 `KEYEVENTF_UNICODE` 注入，与键盘布局和输入法状态无关，单条 ≤ 1024 字节 UTF-8，非法 UTF-8 被替换为 U+FFFD）。后两项（2026-10-28）是 NightDesk 客户端已经在发的 v0 扩展，线上字节有逐字节向量测试；文本与其他输入一样有 opID 去重和回执，并且只对当前活动会话生效。**没有** X 键。老版本主机不认识 `MsgText`，收到会直接结束会话，所以只能发给确知支持的主机（见协议版本协商） | `internal/proto`、`internal/remote/{host,input,client}.go`、`internal/inject` |
 | opId 与去重 | 已实现 | `u64` opId，主机保留最近 1024 个；opId=0（鼠标移动、按键自动重复）不去重也无回执。**不是** UUID，无 `clientTs` | `proto.go:178`、`host.go:210` |
 | 回执状态 | 部分 | 只有 Executed / Failed；没有 Accepted / Timeout | `proto.go:38-39` |

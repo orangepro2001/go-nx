@@ -22,10 +22,9 @@ import (
 
 	"github.com/quic-go/quic-go"
 
+	"github.com/orangepro2001/go-nx/internal/proto"
 	"github.com/orangepro2001/go-nx/internal/trust"
 )
-
-const alpn = "go-nx"
 
 // Application close codes the host sends, so the viewer can say why it was dropped.
 const (
@@ -60,11 +59,11 @@ func quicConfig() *quic.Config {
 
 // serverTLS asks every viewer for a certificate. Trust is decided by fingerprint
 // in Serve, so any certificate is accepted at the TLS layer.
-func serverTLS(id tls.Certificate) *tls.Config {
+func serverTLS(id tls.Certificate, maxVersion int) *tls.Config {
 	return &tls.Config{
 		Certificates: []tls.Certificate{id},
 		ClientAuth:   tls.RequireAnyClientCert,
-		NextProtos:   []string{alpn},
+		NextProtos:   protos(maxVersion),
 		MinVersion:   tls.VersionTLS13,
 	}
 }
@@ -77,6 +76,11 @@ func serverTLS(id tls.Certificate) *tls.Config {
 // roaming profile) would delay or even abort the very first connection. The
 // returned *pinRecorder is committed by Dial once the handshake has finished.
 func clientTLS(id tls.Certificate, host string, hosts *trust.Store) (*tls.Config, *pinRecorder) {
+	return clientTLSVersions(id, host, hosts, proto.Version1)
+}
+
+// clientTLSVersions is clientTLS offering control protocols up to maxVersion.
+func clientTLSVersions(id tls.Certificate, host string, hosts *trust.Store, maxVersion int) (*tls.Config, *pinRecorder) {
 	pin := &pinRecorder{host: host}
 	return &tls.Config{
 		Certificates:       []tls.Certificate{id},
@@ -95,7 +99,7 @@ func clientTLS(id tls.Certificate, host string, hosts *trust.Store) (*tls.Config
 			pin.remember(fp)
 			return nil
 		},
-		NextProtos: []string{alpn},
+		NextProtos: protos(maxVersion),
 		MinVersion: tls.VersionTLS13,
 	}, pin
 }
@@ -126,7 +130,13 @@ func (p *pinRecorder) commit(hosts *trust.Store) error {
 
 // Listen starts a QUIC listener for hosts.
 func Listen(addr string, id tls.Certificate) (*quic.Listener, error) {
-	return quic.ListenAddr(addr, serverTLS(id), quicConfig())
+	return listen(addr, id, proto.Version1)
+}
+
+// listen is Listen offering control protocols up to maxVersion; 0 behaves like a
+// host from before version negotiation existed.
+func listen(addr string, id tls.Certificate, maxVersion int) (*quic.Listener, error) {
+	return quic.ListenAddr(addr, serverTLS(id, maxVersion), quicConfig())
 }
 
 // Probe connects to addr only far enough to learn the fingerprint of the
@@ -147,7 +157,7 @@ func Probe(ctx context.Context, addr string, id tls.Certificate) (string, error)
 			seen.Store(trust.Fingerprint(raw[0]))
 			return nil
 		},
-		NextProtos: []string{alpn},
+		NextProtos: protos(proto.Version1),
 		MinVersion: tls.VersionTLS13,
 	}
 	conn, err := quic.DialAddr(ctx, addr, cfg, quicConfig())

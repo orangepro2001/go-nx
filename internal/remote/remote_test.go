@@ -157,16 +157,28 @@ func startWith(t *testing.T, opt Options, hostID, viewerID tls.Certificate, host
 		return r
 	}
 	t.Cleanup(r.client.Close)
-	go r.client.Run(ctx, func(f *tile.Frame, _ []tile.Rect) {
-		time.Sleep(onFrameDelay)
-		r.mu.Lock()
-		r.view = append(r.view[:0], f.Pix...)
-		r.mu.Unlock()
-	}, func(id uint64, st byte) {
-		r.mu.Lock()
-		r.recv[id] = st
-		r.mu.Unlock()
-	})
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		r.client.Run(ctx, func(f *tile.Frame, _ []tile.Rect) {
+			time.Sleep(onFrameDelay)
+			r.mu.Lock()
+			r.view = append(r.view[:0], f.Pix...)
+			r.mu.Unlock()
+		}, func(id uint64, st byte) {
+			r.mu.Lock()
+			r.recv[id] = st
+			r.mu.Unlock()
+		})
+	}()
+	// A v1 host introduces itself before anything else, and a host that refuses the
+	// viewer closes the connection instead; either way the test can start.
+	select {
+	case <-r.client.welcome:
+	case <-runDone:
+	case <-time.After(5 * time.Second):
+		t.Error("the host neither introduced itself nor closed the connection")
+	}
 	return r
 }
 

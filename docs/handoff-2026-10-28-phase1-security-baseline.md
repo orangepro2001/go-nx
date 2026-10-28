@@ -10,7 +10,7 @@
 
 | 项 | 行为 | 主要位置 |
 |---|---|---|
-| 恶意主机上限 | 公布的帧尺寸 ≤ 16384 px/边、≤ 2²⁵ 像素；单个更新流 ≤ 约 138 MiB；调色板 RLE 展开前校验；raw tile 的 deflate 最多读 size+1 字节；每帧记录数 ≤ tile 数；更新流 15 s 无数据即放弃；主机自己的屏幕超限时 `Serve` 报错 | `internal/proto`、`internal/tile`、`internal/remote/{client,host}.go` |
+| 恶意主机上限 | 公布的帧尺寸 ≤ 16384 px/边、≤ 2²⁵ 像素；单个更新流 ≤ 132 MiB；调色板 RLE 展开前校验；raw tile 的 deflate 最多读 size+1 字节；每帧记录数 ≤ tile 数；更新流 15 s 无数据即放弃；主机自己的屏幕超限时 `Serve` 报错 | `internal/proto`、`internal/tile`、`internal/remote/{client,host}.go` |
 | fuzz | `FuzzReadMsg`、`FuzzParseFrameHeader`、`FuzzDecode`，约 600 万次执行无发现 | 各包 `_test.go` |
 | 原子写 + 损坏文件隔离 | 状态文件经临时文件 + fsync + rename；读不懂的 JSON 改名为 `*.corrupt-<时间>`、以空状态继续并弹窗告知，不再 `log.Fatal` | `internal/fsutil`、`trust.OpenStoreRecovering`、`profiles.LoadRecovering` |
 | 撤销 | `Store.Delete/Clear/Keys`、`Policy.Revoke/RevokeAll`；主页 "Forget paired devices"（点两次）并以 `CloseRevoked` 断开当前控制者；控制端主机证书变化后 `Ctrl+F` 忘记旧指纹 | `internal/trust`、`internal/ui/home.go`、`cmd/go-nx` |

@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -88,6 +89,16 @@ func TestTextFromAHostThatCannotTypeFailsWithoutEndingTheSession(t *testing.T) {
 	got := make(chan byte, 4)
 	go c.Run(ctx, func(*tile.Frame, []tile.Rect) {}, func(id uint64, st byte) { got <- st })
 
+	if _, err := c.WaitHost(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The viewer knows from the welcome that this host cannot type, and says so
+	// without sending anything.
+	if err := c.SendText(30, "x"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("SendText = %v, want ErrUnsupported", err)
+	}
+	// A caller that insists anyway gets a Failed receipt, and the session survives.
+	c.AssumeCaps(proto.CapText)
 	if err := c.SendText(31, "x"); err != nil {
 		t.Fatal(err)
 	}
