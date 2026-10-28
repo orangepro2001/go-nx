@@ -62,7 +62,8 @@ jobs:
           for target in linux/amd64 darwin/arm64 windows/amd64 android/arm64; do
             echo "== $target"
             GOOS=${target%/*} GOARCH=${target#*/} go build \
-              ./internal/proto ./internal/tile ./internal/trust ./internal/remote
+              ./internal/proto ./internal/tile ./internal/trust ./internal/remote \
+              ./internal/synth ./internal/logsink ./internal/probe
           done
 
   windows:

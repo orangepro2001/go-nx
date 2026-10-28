@@ -3,6 +3,7 @@ package proto
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 )
@@ -28,6 +29,26 @@ const (
 
 // Has reports whether every ability in want is present.
 func (c Caps) Has(want Caps) bool { return c&want == want }
+
+var capNames = [...]string{"text", "wheelh", "resize", "cursor"}
+
+// Names lists the abilities in c for logs and tooling, in bit order. A bit this
+// build does not know is named "bitN", so that what a newer peer advertises is
+// never silently dropped.
+func (c Caps) Names() []string {
+	var out []string
+	for bit := 0; bit < 64; bit++ {
+		if c&(Caps(1)<<bit) == 0 {
+			continue
+		}
+		if bit < len(capNames) {
+			out = append(out, capNames[bit])
+		} else {
+			out = append(out, fmt.Sprintf("bit%d", bit))
+		}
+	}
+	return out
+}
 
 // Version1 is the control-protocol version this package speaks.
 const Version1 = 1

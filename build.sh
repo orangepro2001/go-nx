@@ -21,9 +21,16 @@ GOOS=windows go vet ./...
 go test ./...
 
 mkdir -p build
+# Only the programs listed here are windowed (no console). Every other command is a
+# console tool whose output has to stay visible, so it is built without -H=windowsgui.
+gui=(go-nx)
 for cmd in cmd/*/; do
 	name=$(basename "$cmd")
+	flags="-s -w -X main.version=$VERSION"
+	for g in "${gui[@]}"; do
+		[[ $g == "$name" ]] && flags="$flags -H=windowsgui"
+	done
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
-		go build -trimpath -ldflags "-s -w -H=windowsgui -X main.version=$VERSION" -o "build/$name.exe" "./$cmd"
+		go build -trimpath -ldflags "$flags" -o "build/$name.exe" "./$cmd"
 	echo "built build/$name.exe v$VERSION ($(du -h "build/$name.exe" | cut -f1))"
 done

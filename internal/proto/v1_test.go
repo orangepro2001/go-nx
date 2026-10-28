@@ -242,3 +242,25 @@ func FuzzReadHostMsgV1(f *testing.F) {
 		}
 	})
 }
+
+func TestCapsNames(t *testing.T) {
+	if got := Caps(0).Names(); len(got) != 0 {
+		t.Errorf("no capabilities named %v", got)
+	}
+	all := CapText | CapWheelH | CapResize | CapCursor
+	got := all.Names()
+	want := []string{"text", "wheelh", "resize", "cursor"}
+	if len(got) != len(want) {
+		t.Fatalf("Names() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Names() = %v, want %v", got, want)
+		}
+	}
+	// A capability this build has never heard of is still reported, so that a log or
+	// a probe result never silently drops what a newer peer advertises.
+	if got := (CapText | Caps(1)<<40).Names(); len(got) != 2 || got[0] != "text" || got[1] != "bit40" {
+		t.Errorf("Names() with an unknown bit = %v, want [text bit40]", got)
+	}
+}
