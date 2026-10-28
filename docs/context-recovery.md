@@ -94,11 +94,11 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 
 按 [`ROADMAP.md`](ROADMAP.md)：
 
-1. **阶段 1 安全基线**（下一个）：默认开认证（含旧设置迁移）、一次性配对码 + 指纹核对、校验前不发密码、密码哈希 + DPAPI、撤销设备、按来源限流、恶意主机上限、JSON 原子写、fuzz。
-2. 阶段 2 协议规范与版本协商 → 阶段 3 回移 NightDesk 修复（只读快照 `/home/tony/dev/nightdesk-native-ux-20261028`）。
-3. UI 重设计：等用户对 `ui-redesign.md` 第 11 节的回复，再做 U0 技术验证。
-4. 仍待用户在 Windows 上做：`ACCEPTANCE.md` §3 的 H1–H17（含自更新 H1–H3 和阶段 1 新增界面 H13–H17）。
-5. 可选：go-nx 专用 CI token；窗口主页也显示更新提示；Windows 代码签名；把签名私钥备份另存一份到本机之外。
+1. **阶段 2 协议规范与版本协商**（下一个，等用户对 ALPN 名称、帧格式和能力位的意见）。其中包含兼容性修复：NightDesk 的 `MsgText=4` / `KindWheelH=7` 现在会让 go-nx 主机直接断会话。随后是阶段 3（回移 NightDesk 修复，来源只读：`/home/tony/dev/nightdesk-native-ux-20261028`）。
+2. UI 重设计：等用户对 `ui-redesign.md` 第 11 节的回复，再做 U0 技术验证。
+3. 仍待用户在 Windows 上做：`ACCEPTANCE.md` §3 的 H1–H19（自更新 H1–H3、主页更新按钮 H18、阶段 1 与模式按钮的新界面 H13–H17、H19）。
+4. 阶段 1 已完成（密码哈希 + DPAPI 经评估暂缓，理由见 `ROADMAP.md`「暂缓项」）。
+5. 可选：go-nx 专用 CI token；Windows 代码签名；把签名私钥备份另存一份到本机之外；逐设备配对列表（属于 UI 重设计的一部分）。
 
 ## 最近一份交接文档
 
