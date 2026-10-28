@@ -13,13 +13,25 @@ go-nx：Windows 10/11 上的轻量局域网远程控制。纯 Go、无 cgo、单
 
 - 已接入本机 release-publish：app `go-nx`，平台 `win-x64`，**0.1.0（versionCode 100）已发布**到线上。
 - 应用内自更新已实现并通过测试；**Windows 实机上的托盘、替换 exe、重启流程还没验证过**。
-- 本地提交 `98bda14`，**没有 push**。`docs/handoff-2026-10-28-release-publish.md` 和本文件写在该提交之后，未提交。
+- 当前工作是 [`ROADMAP.md`](ROADMAP.md) 的开发计划：**阶段 0 完成**（基线、状态文档、CI），下一步是阶段 1（安全基线）。
+- 所有提交已推送到 `origin main`；CI（`.github/workflows/ci.yml`，linux + windows-latest）在 `820d1f7` 上两个作业都通过。
 - 全局 git 身份：`orangepro2001 <yangziyi0801@gmail.com>`（2026-10-28 设置）。`98bda14` 的作者是 `tony`，没有改写。
+
+## 工作约束（用户 2026-10-28 明确）
+
+- **本仓库每完成一项可交付的工作就自动 commit + push 到 `origin main`**，无需询问。先跑完检查，通过才提交；只按文件名暂存，不用 `git add -A`，不 amend / reset / force push。
+- 这条授权**不含**：`release.sh` 发新版本、打 tag / GitHub Release、装依赖、改认证——这些仍需单独问。
+- **不要改动 NightDesk 侧任何源码**（`/home/tony/dev/nightdesk-*`、`/home/tony/dev/native` 等）：那个项目不是最新版本，只读，当回移参考；改它对 go-nx 的依赖留到以后。
+- 项目是**单一上游**：NightDesk 的通用修复回移到这里。协议要保持对 NightDesk 已发布客户端的兼容（`MsgText=4`、`KindWheelH=7`）。
+- 只有一台日常使用的 Windows PC：会改系统状态的实机项只写成人工清单（`ACCEPTANCE.md` §3）。真实 Windows 行为优先用 CI 的 `windows-latest` 验证。
 
 ## 常用命令
 
 ```sh
 ./build.sh                     # genicon → vet → Windows vet → test → 交叉编译，版本取自 VERSION
+go test -race -cover ./...     # 核心包 Linux 上即可测；capture/inject/cmd 只在 Windows 编译
+GOOS=windows go test -c -o $TMP/x.exe ./internal/capture   # Windows 测试可交叉编译，用 wine 或 CI 跑
+gh run list --limit 3          # 看 CI；gh 已登录 orangepro2001
 go test -race ./internal/update/
 ./scripts/e2e-update.sh        # 真实 relhub + 临时目录 + 随机回环端口，不碰线上服务
 NOTES="改了什么" ./release.sh  # 需要干净工作区；ALLOW_DIRTY=1 可跳过
@@ -42,6 +54,13 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 | `internal/update/update.go` | 更新器：`New`、`Run`、`CheckNow`、`Install`、`Replace`、`CleanupOld`、`PinnedKeys` |
 | `internal/relhub/` | release-publish 客户端 SDK 的副本（来源与同步方法见其 README） |
 | `docs/release.md` | 发布流程、客户端行为、公钥轮换、测试 |
+| `docs/ROADMAP.md` | 开发路线图与各阶段状态（**先读**） |
+| `docs/IMPLEMENTED.md` | 实现状态，以代码为准，带文件:行；设计文档只是意图 |
+| `docs/ACCEPTANCE.md` | 已验证 / 未验证；CI runner 实测结果；人工实机清单 H1–H12 |
+| `docs/review-2026-10-28-nightdesk-integration-notes.md` | 对 NightDesk 集成经验文档的逐条核对与发现的缺陷 |
+| `.github/workflows/ci.yml` | linux（gofmt / vet / -race / 可移植核心交叉编译）+ windows-latest（build / test / 桌面冒烟） |
+| `internal/{capture,inject}/*_windows_test.go` | 真实桌面冒烟；需 `GO_NX_WINDOWS_E2E=1`，会画窗口、动光标，**别在日常 PC 上开** |
+| `README.md` | 简介、限制、构建与运行 |
 
 ## release-publish 服务（本机）
 
@@ -59,13 +78,22 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 - `alreadyRunning` 重试时必须 `CloseHandle`，否则旧进程退出后互斥量仍被撑住。
 - 用 Python 之类批量替换文件时，找不到匹配会静默不改，改完要 `git diff` 核对。
 - 安装在只读目录时更新会失败，原因只写在日志里。
+- `build.sh` 对 `cmd/*/` 的每个目录都用 `-H=windowsgui` 构建；加入控制台程序（`nx-host`、`nx-probe`）前要先改这个循环。
+- zsh 里 `grep --include=*.go` 会报 "no matches found"（被当 glob），要加引号。
+- 计划模式下 Explore agent 不会跑 `go test`；测试基线要自己跑。
+- 本机 wine 可跑交叉编译出的 Windows 测试（用临时 `WINEPREFIX`，别污染 `~/.wine`；窗口测试要 `xvfb-run`）。wine 的 GDI / `SendInput` 行为**不等于**真 Windows（例如它在 1280×800 下让绝对移动偏 1px，而 windows-latest 的 1024×768 上无偏差）。
+- 绝对坐标映射 `x*65535/(w-1)` 的偏差与分辨率有关，只在一个分辨率下通过不代表没问题。
 
 ## 下一步清单
 
-1. 在 Windows 机器上手动装 0.1.0，再发布 0.1.1，验证托盘检查 → 下载 → 点击重启 → 无"已在运行"弹窗 → `.old` 被清理。
-2. 提交 `docs/` 里的两份文档；push 需要用户单独授权。
-3. 可选：go-nx 专用 CI token；窗口主页也显示更新提示；Windows 代码签名；把签名私钥备份另存一份到本机之外。
+按 [`ROADMAP.md`](ROADMAP.md)：
+
+1. **阶段 1 安全基线**（下一个）：默认开认证（含旧设置迁移）、一次性配对码 + 指纹核对、校验前不发密码、密码哈希 + DPAPI、撤销设备、按来源限流、恶意主机上限、JSON 原子写、fuzz。
+2. 阶段 2 协议规范与版本协商 → 阶段 3 回移 NightDesk 修复（只读快照 `/home/tony/dev/nightdesk-native-ux-20261028`）。
+3. 仍待用户在 Windows 上做：`ACCEPTANCE.md` §3 的 H1–H12（含自更新的 H1–H3）。
+4. 可选：go-nx 专用 CI token；窗口主页也显示更新提示；Windows 代码签名；把签名私钥备份另存一份到本机之外。
 
 ## 最近一份交接文档
 
-[`docs/handoff-2026-10-28-release-publish.md`](handoff-2026-10-28-release-publish.md)：成果、验证了什么/没验证什么、遇到的问题、设计取舍、经验、未完成项。
+[`docs/handoff-2026-10-28-phase0-baseline.md`](handoff-2026-10-28-phase0-baseline.md)：阶段 0 的成果、核对结论、验证、问题、取舍、经验、下一步。
+更早：[`docs/handoff-2026-10-28-release-publish.md`](handoff-2026-10-28-release-publish.md)（接入 release-publish）。

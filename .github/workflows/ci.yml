@@ -87,10 +87,9 @@ jobs:
       - name: unit tests
         run: go test -count=1 ./...
 
-      # Spike (see docs/ACCEPTANCE.md): does a hosted runner have a desktop that GDI can
-      # capture and SendInput can drive? Non-blocking until the first runs answer that.
+      # The hosted runner has an interactive 1024x768 desktop that GDI can capture and
+      # SendInput can drive (docs/ACCEPTANCE.md, section 1b), so this blocks.
       - name: real desktop smoke (capture, inject)
-        continue-on-error: true
         env:
           GO_NX_WINDOWS_E2E: "1"
         run: go test -count=1 -v ./internal/capture ./internal/inject

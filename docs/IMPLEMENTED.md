@@ -22,7 +22,7 @@
 | 项 | 状态 | 实际情况 | 位置 |
 |---|---|---|---|
 | tile 大小 | 已实现 | 64×64 | `internal/tile/tile.go:13` |
-| 像素格式 | 已实现 | 线上与内存都是 BGRA、自上而下；第 4 字节**无定义**（GDI 不保证是 alpha），查看器渲染时必须丢弃/置 255 | `tile.go:14,24`、`viewer_windows.go:101-106` |
+| 像素格式 | 已实现 | 线上与内存都是 BGRA、自上而下；第 4 字节**无定义**（GDI 不保证是 alpha；在 GitHub windows-latest 上实测恰好是 255，不能当契约），查看器渲染时必须丢弃/置 255 | `tile.go:14,24`、`viewer_windows.go:101-106` |
 | 差分方式 | 已实现 | 与上一帧逐 tile `bytes.Equal`。**没有** xxHash | `tile.go:66` |
 | 编码 | 已实现 | 纯色 / 调色板+RLE / flate(`BestSpeed`) 原始。**没有** LZ4 | `tile.go:18-21,193` |
 | 脏矩形、周期随机抽检、`ACCESS_LOST` 重建 | 未实现 | 设计文档 `final-converged-plan.md` 提过 | — |
