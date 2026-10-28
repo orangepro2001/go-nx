@@ -58,7 +58,7 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 | `docs/release.md` | 发布流程（含每次改动的 `ship.sh`）、更新入口在哪、客户端行为、公钥轮换、测试 |
 | `scripts/ship.sh` | 一条命令发布一次改动：预检线上版本 → 升 `VERSION` → 提交推送 → 等 CI → 发布 → 验证 |
 | `docs/ROADMAP.md` | 开发路线图与各阶段状态（**先读**） |
-| `docs/ui-redesign.md` | UI 重设计方案（只有设计，没有代码）：技术栈决策、设计令牌、界面、性能预算、U0–U6 计划、待你决定的问题 |
+| `docs/ui-redesign.md` | UI 重设计方案 v2（只有设计，没有代码）：已定 = 效率优先、蓝色、中 / 英 / 韩三语；含技术栈决策、三语字体与输入法、设计令牌、界面、性能预算、U0–U6 计划、第 13 节待定问题 |
 | `docs/IMPLEMENTED.md` | 实现状态，以代码为准，带文件:行；设计文档只是意图 |
 | `docs/ACCEPTANCE.md` | 已验证 / 未验证；CI runner 实测结果；人工实机清单 H1–H12 |
 | `docs/review-2026-10-28-nightdesk-integration-notes.md` | 对 NightDesk 集成经验文档的逐条核对与发现的缺陷 |
@@ -95,14 +95,15 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 按 [`ROADMAP.md`](ROADMAP.md)：
 
 1. **阶段 2 协议规范与版本协商**（下一个，等用户对 ALPN 名称、帧格式和能力位的意见）。其中包含兼容性修复：NightDesk 的 `MsgText=4` / `KindWheelH=7` 现在会让 go-nx 主机直接断会话。随后是阶段 3（回移 NightDesk 修复，来源只读：`/home/tony/dev/nightdesk-native-ux-20261028`）。
-2. UI 重设计：等用户对 `ui-redesign.md` 第 11 节的回复，再做 U0 技术验证。
+2. UI 重设计：**用户要求 UI 阶段只写文档**，不要开始实现；等用户对 `ui-redesign.md` 第 13 节三个问题的回复（哪些 B 层功能要做、阶段 2 是否排在 UI 实现之前、何时启动 U0）。
 3. 仍待用户在 Windows 上做：`ACCEPTANCE.md` §3 的 H1–H19（自更新 H1–H3、主页更新按钮 H18、阶段 1 与模式按钮的新界面 H13–H17、H19）。
 4. 阶段 1 已完成（密码哈希 + DPAPI 经评估暂缓，理由见 `ROADMAP.md`「暂缓项」）。
 5. 可选：go-nx 专用 CI token；Windows 代码签名；把签名私钥备份另存一份到本机之外；逐设备配对列表（属于 UI 重设计的一部分）。
 
 ## 最近一份交接文档
 
-[`docs/handoff-2026-10-28-mode-button-ui-plan.md`](handoff-2026-10-28-mode-button-ui-plan.md)：模式按钮（0.3.0）与 UI 重设计方案。
+[`docs/handoff-2026-10-28-ui-plan-v2.md`](handoff-2026-10-28-ui-plan-v2.md)：UI 方案 v2（效率优先、蓝色、中 / 英 / 韩三语），含对 v1 的更正和这次从源码查实的事实。
+更早：[`docs/handoff-2026-10-28-mode-button-ui-plan.md`](handoff-2026-10-28-mode-button-ui-plan.md)（模式按钮 0.3.0 与 UI 方案 v1）。
 更早：[`docs/handoff-2026-10-28-release-0.2.0.md`](handoff-2026-10-28-release-0.2.0.md)：回答"有没有自动推送更新"、主页更新按钮、`ship.sh`、0.2.0 的发布与独立验证。
 更早：[`docs/handoff-2026-10-28-phase1-security-baseline.md`](handoff-2026-10-28-phase1-security-baseline.md)：阶段 1（安全基线）的成果、行为变更（发布前要写进说明）、验证、问题、取舍、经验。
 更早：[`docs/handoff-2026-10-28-phase0-baseline.md`](handoff-2026-10-28-phase0-baseline.md)（阶段 0）、[`docs/handoff-2026-10-28-release-publish.md`](handoff-2026-10-28-release-publish.md)（接入 release-publish）。
