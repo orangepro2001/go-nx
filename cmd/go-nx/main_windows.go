@@ -132,11 +132,19 @@ func main() {
 		}
 	}()
 
+	// A file that exists but is damaged (a crash or power loss while it was
+	// written, a stray edit) is set aside and the program starts with it empty;
+	// the user is told once everything is loaded.
+	var recovered []string
 	open := func(name string) *trust.Store {
-		st, err := trust.OpenStore(filepath.Join(dir, name))
+		st, backup, err := trust.OpenStoreRecovering(filepath.Join(dir, name))
 		if err != nil {
 			messageBox("go-nx", "Cannot read "+name+": "+err.Error())
 			log.Fatal(err)
+		}
+		if backup != "" {
+			log.Printf("%s was unreadable; moved to %s", name, backup)
+			recovered = append(recovered, name+" -> "+filepath.Base(backup))
 		}
 		return st
 	}
@@ -146,10 +154,18 @@ func main() {
 		log.Fatal(err)
 	}
 	trusted, settings, hosts := open("trusted.json"), open("settings.json"), open("hosts.json")
-	saved, err := profiles.Load(filepath.Join(dir, "connections.json"))
+	saved, backup, err := profiles.LoadRecovering(filepath.Join(dir, "connections.json"))
 	if err != nil {
 		messageBox("go-nx", "Cannot read connections.json: "+err.Error())
 		log.Fatal(err)
+	}
+	if backup != "" {
+		log.Printf("connections.json was unreadable; moved to %s", backup)
+		recovered = append(recovered, "connections.json -> "+filepath.Base(backup))
+	}
+	if len(recovered) > 0 {
+		messageBox("go-nx", "These files in "+dir+" could not be read, so they were set aside and go-nx started with them empty "+
+			"(paired devices, saved hosts or saved connections may need to be set up again):\n\n"+strings.Join(recovered, "\n"))
 	}
 	face, err := ui.NewFace()
 	if err != nil {

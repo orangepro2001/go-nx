@@ -1,6 +1,7 @@
 package profiles
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -71,5 +72,27 @@ func TestRenameKeepsNamesUnique(t *testing.T) {
 	l2, _ := Load(path)
 	if l2.Items[0].Name != "Press 3" || l2.Items[0].Addr != "1" || l2.Items[1].Name != "B" {
 		t.Fatalf("items = %+v", l2.Items)
+	}
+}
+
+func TestLoadRecoveringSetsCorruptFileAside(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "connections.json")
+	if err := os.WriteFile(p, []byte(`[{"name":"a"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err == nil {
+		t.Fatal("strict Load accepted a corrupt file")
+	}
+	l, backup, err := LoadRecovering(p)
+	if err != nil || backup == "" || len(l.Items) != 0 {
+		t.Fatalf("recovering = %d items, backup %q, err %v", len(l.Items), backup, err)
+	}
+	if err := l.Upsert(Profile{Name: "b", Addr: "1.2.3.4:7000"}); err != nil {
+		t.Fatal(err)
+	}
+	again, backup2, err := LoadRecovering(p)
+	if err != nil || backup2 != "" || len(again.Items) != 1 {
+		t.Fatalf("reopen = %d items, backup %q, err %v", len(again.Items), backup2, err)
 	}
 }

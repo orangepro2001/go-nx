@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
+
+	"go-nx/internal/fsutil"
 )
 
 // Profile is one saved connection. Password may be empty. It is stored in clear
@@ -39,15 +41,32 @@ func Load(path string) (*List, error) {
 	return l, nil
 }
 
+// LoadRecovering is Load for start-up: a file that exists but cannot be parsed
+// is moved aside (its new name is returned as backup) and the list starts empty.
+// The caller should tell the user, since the saved connections in it are no
+// longer loaded.
+func LoadRecovering(path string) (l *List, backup string, err error) {
+	l, err = Load(path)
+	if err == nil {
+		return l, "", nil
+	}
+	var syn *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	if !errors.As(err, &syn) && !errors.As(err, &typ) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, "", err
+	}
+	if backup, err = fsutil.Quarantine(path); err != nil {
+		return nil, "", err
+	}
+	return &List{path: path}, backup, nil
+}
+
 func (l *List) save() error {
 	b, err := json.MarshalIndent(l.Items, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(l.path, b, 0o600)
+	return fsutil.WriteFileAtomic(l.path, b, 0o600)
 }
 
 func (l *List) index(name string) int {

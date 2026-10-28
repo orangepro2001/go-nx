@@ -13,11 +13,14 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"go-nx/internal/fsutil"
 )
 
 // Fingerprint is the hex SHA-256 of a DER certificate.
@@ -60,10 +63,7 @@ func Identity(dir string) (tls.Certificate, error) {
 	pemData := append(
 		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
 		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})...)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return tls.Certificate{}, err
-	}
-	if err := os.WriteFile(path, pemData, 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(path, pemData, 0o600); err != nil {
 		return tls.Certificate{}, err
 	}
 	return tls.X509KeyPair(pemData, pemData)
@@ -92,6 +92,27 @@ func OpenStore(path string) (*Store, error) {
 	return s, nil
 }
 
+// OpenStoreRecovering is OpenStore for start-up: a file that exists but cannot
+// be parsed is moved aside (its new name is returned as backup) and the store
+// starts empty, so one damaged file cannot keep the program from starting. The
+// caller should tell the user, because whatever was in the file is gone from the
+// program's point of view (a trusted store loses its pairings).
+func OpenStoreRecovering(path string) (s *Store, backup string, err error) {
+	s, err = OpenStore(path)
+	if err == nil {
+		return s, "", nil
+	}
+	var syn *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	if !errors.As(err, &syn) && !errors.As(err, &typ) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, "", err // unreadable (permissions, I/O): not ours to paper over
+	}
+	if backup, err = fsutil.Quarantine(path); err != nil {
+		return nil, "", err
+	}
+	return &Store{path: path, m: map[string]string{}}, backup, nil
+}
+
 func (s *Store) Get(key string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -114,8 +135,5 @@ func (s *Store) Set(key, val string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(s.path, b, 0o600)
+	return fsutil.WriteFileAtomic(s.path, b, 0o600)
 }

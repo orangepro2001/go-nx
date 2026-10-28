@@ -54,6 +54,7 @@
 | 首次连接 | 风险 | 密码在校验主机指纹之前就发出（TOFU 首次） | `internal/remote/client.go:45` |
 | 撤销已信任设备 | **未实现** | `Store` 只有 Get/Len/Set；界面没有取消配对；只能手改 `trusted.json` 并重启 | `internal/trust/trust.go` |
 | 凭据存储 | **明文** | 主机密码在 `settings.json`；连接密码在 `connections.json`；`identity.pem` 私钥未加密；Windows 上 0600 无效 | `host_windows.go:88-95`、`internal/profiles/profiles.go:12-17` |
+| 配置文件写入 | 已实现（2026-10-28） | `trusted/settings/hosts/connections.json` 与 `identity.pem` 经临时文件 + fsync + rename 原子替换；启动时读不懂的 JSON 被改名为 `<名>.corrupt-<时间>` 并以空状态继续，弹窗告知，而不是 `log.Fatal`。`identity.pem` 本身损坏仍是明确报错（自动重建会改变指纹、使所有配对失效）；读取失败（权限 / I/O）也仍报错 | `internal/fsutil`、`trust.OpenStoreRecovering`、`profiles.LoadRecovering`、`cmd/go-nx/main_windows.go` |
 | 监听范围 | 全接口 | `":%d"`，默认 UDP 7000，无绑定选项 | `host_windows.go:151`、`main_windows.go:98` |
 | 权限分级 | 不做 | 配对成功即可操作 | `minimal-plan.md` |
 | 审计日志 | 部分 | 只有 `go-nx.log` 里的连接/拒绝行 | `internal/logging` |
