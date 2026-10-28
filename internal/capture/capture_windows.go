@@ -172,9 +172,14 @@ type Screen struct {
 	old     uintptr
 	pixels  unsafe.Pointer
 
-	pointer     atomic.Bool  // draw the system pointer into each grab
-	pointerNote atomic.Value // string: why the last attempt to draw it did nothing, for logs and tests
-	noBlt       atomic.Bool  // leave CAPTUREBLT out (layered windows then may not be captured)
+	pointer atomic.Bool // draw the system pointer into each grab
+
+	// pointerSource says which pointer to draw and where. It is the system's
+	// (systemPointer) except in tests, which supply a fixed one because a desktop
+	// without a mouse never shows the real one.
+	pointerSource func() (handle uintptr, x, y int32, ok bool)
+	pointerNote   atomic.Value // string: why the last attempt to draw it did nothing, for logs and tests
+	noBlt         atomic.Bool  // leave CAPTUREBLT out (layered windows then may not be captured)
 }
 
 // NewScreen opens the primary monitor.
@@ -191,7 +196,7 @@ func Open(selector string) (*Screen, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Screen{}
+	s := &Screen{pointerSource: systemPointer}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.build(d); err != nil {
@@ -339,21 +344,28 @@ func (s *Screen) Grab(dst *tile.Frame) error {
 	return nil
 }
 
-// drawCursor composites the Windows pointer after BitBlt, which does not capture
-// it, so it is visible in a viewer that has no pointer of its own.
-func (s *Screen) drawCursor() {
+// systemPointer asks Windows which pointer is showing and where its hotspot is, in
+// virtual-desktop pixels. ok is false if it is hidden.
+func systemPointer() (handle uintptr, x, y int32, ok bool) {
 	info := cursorInfo{Size: uint32(unsafe.Sizeof(cursorInfo{}))}
-	if r, _, err := getCursor.Call(uintptr(unsafe.Pointer(&info))); r == 0 {
-		s.pointerNote.Store(fmt.Sprintf("GetCursorInfo failed: %v", err))
-		return
+	if r, _, _ := getCursor.Call(uintptr(unsafe.Pointer(&info))); r == 0 ||
+		info.Flags&cursorShowing == 0 || info.Cursor == 0 {
+		return 0, 0, 0, false
 	}
-	if info.Flags&cursorShowing == 0 || info.Cursor == 0 {
-		s.pointerNote.Store(fmt.Sprintf("the pointer is hidden (flags %#x, handle %#x)", info.Flags, info.Cursor))
+	return info.Cursor, info.Position.X, info.Position.Y, true
+}
+
+// drawCursor composites the pointer after BitBlt, which does not capture it, so
+// it is visible in a viewer that has no pointer of its own.
+func (s *Screen) drawCursor() {
+	h, px, py, ok := s.pointerSource()
+	if !ok {
+		s.pointerNote.Store("the pointer is hidden")
 		return
 	}
 	var hotX, hotY uint32
 	var icon iconInfo
-	if r, _, _ := getIcon.Call(info.Cursor, uintptr(unsafe.Pointer(&icon))); r != 0 {
+	if r, _, _ := getIcon.Call(h, uintptr(unsafe.Pointer(&icon))); r != 0 {
 		hotX, hotY = icon.HotspotX, icon.HotspotY
 		// GetIconInfo hands over copies of the bitmaps that the caller must free.
 		if icon.Mask != 0 {
@@ -363,12 +375,12 @@ func (s *Screen) drawCursor() {
 			defer deleteObj.Call(icon.Color)
 		}
 	}
-	x, y := cursor.DrawPosition(s.display.X, s.display.Y, info.Position.X, info.Position.Y, hotX, hotY)
-	if r, _, err := drawIcon.Call(s.memDC, uintptr(x), uintptr(y), info.Cursor, 0, 0, 0, 0, diNormal); r == 0 {
+	x, y := cursor.DrawPosition(s.display.X, s.display.Y, px, py, hotX, hotY)
+	if r, _, err := drawIcon.Call(s.memDC, uintptr(x), uintptr(y), h, 0, 0, 0, 0, diNormal); r == 0 {
 		s.pointerNote.Store(fmt.Sprintf("DrawIconEx failed at %d,%d: %v", x, y, err))
 		return
 	}
-	s.pointerNote.Store(fmt.Sprintf("drew the pointer at %d,%d (hotspot %d,%d, pointer at %d,%d)", x, y, hotX, hotY, info.Position.X, info.Position.Y))
+	s.pointerNote.Store(fmt.Sprintf("drew the pointer at %d,%d (hotspot %d,%d, pointer at %d,%d)", x, y, hotX, hotY, px, py))
 }
 
 // PointerNote says what the last attempt to draw the pointer did, or why it did

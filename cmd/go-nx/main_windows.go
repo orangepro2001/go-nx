@@ -484,7 +484,7 @@ func (a *app) updateHome() {
 			switch {
 			case updater == nil:
 				a.message = "This build does not check for updates (a dev build, or started with -no-update)"
-			case updater.Status().State == update.Ready && !updateArmed:
+			case restartPending(updater.Status()) && !updateArmed:
 				a.updateArmed = true // restarting ends every remote session, so ask once more
 			default:
 				a.message = ""

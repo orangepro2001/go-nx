@@ -4,8 +4,8 @@ package capture
 
 import (
 	"strings"
+	"syscall"
 	"testing"
-	"time"
 
 	"github.com/orangepro2001/go-nx/internal/tile"
 	"github.com/orangepro2001/go-nx/internal/wintest"
@@ -151,8 +151,20 @@ func TestDisplaysCanBeCalledManyTimes(t *testing.T) {
 	}
 }
 
+// arrowCursor is the standard arrow, whose hotspot is its tip.
+func arrowCursor(t *testing.T) uintptr {
+	t.Helper()
+	h, _, _ := syscall.NewLazyDLL("user32.dll").NewProc("LoadCursorW").Call(0, 32512) // IDC_ARROW
+	if h == 0 {
+		t.Fatal("LoadCursorW(IDC_ARROW) failed")
+	}
+	return h
+}
+
 // The pointer is left out of a grab by default and drawn in when asked, at the
-// right place: inside the window painted under it, covering its hotspot.
+// right place: inside the window painted under it, with its tip at the hotspot. A
+// fixed pointer is supplied because a desktop without a mouse (a CI runner) never
+// shows the real one; the real query has its own test below.
 func TestThePointerIsDrawnOnlyWhenAsked(t *testing.T) {
 	wintest.Skip(t)
 	s, err := NewScreen()
@@ -168,13 +180,8 @@ func TestThePointerIsDrawnOnlyWhenAsked(t *testing.T) {
 	win := wintest.New(t, wintest.Options{X: wx, Y: wy, W: ww, H: wh, R: 20, G: 60, B: 100})
 	defer win.Close()
 	const px, py = 400, 300 // the pointer's hotspot, well inside the window
-	showing, undo := wintest.ShowPointer()
-	defer undo()
-	if !showing {
-		t.Skip("the pointer cannot be made to show on this desktop, so there is nothing to composite")
-	}
-	wintest.SetCursorPos(px, py)
-	win.Pump(200 * time.Millisecond)
+	arrow := arrowCursor(t)
+	s.pointerSource = func() (uintptr, int32, int32, bool) { return arrow, px, py, true }
 
 	grab := func(on bool) *tile.Frame {
 		s.SetCursorVisible(on)
@@ -200,14 +207,32 @@ func TestThePointerIsDrawnOnlyWhenAsked(t *testing.T) {
 		}
 	}
 	if n == 0 {
-		t.Fatalf("the pointer is showing but nothing was drawn into the grab (%s)", s.PointerNote())
+		t.Fatalf("the pointer was asked for but nothing was drawn into the grab (%s)", s.PointerNote())
 	}
 	t.Logf("the pointer covers %d pixels in %d,%d - %d,%d (%s)", n, minX, minY, maxX, maxY, s.PointerNote())
-	if px < minX-1 || px > maxX+1 || py < minY-1 || py > maxY+1 {
-		t.Errorf("the hotspot %d,%d is outside the drawn pointer's box %d,%d - %d,%d", px, py, minX, minY, maxX, maxY)
+	// The arrow's hotspot is its tip, the top-left of the shape.
+	if minX < px-1 || minX > px+1 || minY < py-1 || minY > py+1 {
+		t.Errorf("the arrow's top-left is %d,%d, but its hotspot was placed at %d,%d", minX, minY, px, py)
 	}
-	if maxX-minX > 64 || maxY-minY > 64 {
+	if maxX-minX > 64 || maxY-minY > 64 || maxX-minX < 5 || maxY-minY < 5 {
 		t.Errorf("the drawn pointer is %dx%d pixels, which is not a pointer", maxX-minX+1, maxY-minY+1)
+	}
+}
+
+// With a mouse attached the real pointer is found; without one (a CI runner) it is
+// hidden, which is not an error.
+func TestTheSystemPointerQuery(t *testing.T) {
+	wintest.Skip(t)
+	h, x, y, ok := systemPointer()
+	if !ok {
+		t.Skip("no pointer is showing on this desktop (no mouse attached), so there is nothing to query")
+	}
+	if h == 0 {
+		t.Error("a showing pointer has no handle")
+	}
+	px, py := wintest.CursorPos()
+	if int(x) != px || int(y) != py {
+		t.Errorf("systemPointer says %d,%d but the cursor is at %d,%d", x, y, px, py)
 	}
 }
 

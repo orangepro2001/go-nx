@@ -23,21 +23,32 @@ const restartWait = 10 * time.Second
 // updater is nil in dev builds, with -no-update, and when it could not be set up.
 var updater *update.Updater
 
-// startUpdates removes the build a previous update moved aside and, unless
-// disabled, starts the background update checks.
+// startUpdates repairs what an interrupted update can leave behind and, unless
+// disabled, starts the background update checks. The backup of the previous build
+// is removed by the updater once this build has run for its first delay, not here:
+// until then it is the way back from an update that turns out not to work.
 func startUpdates(url string, disabled bool) {
 	exe, err := os.Executable()
 	if err != nil {
 		log.Printf("update: disabled: cannot locate the running exe: %v", err)
 		return
 	}
-	update.CleanupOld(exe)
+	// Only the backup copy can be left after an update was cut short between its two
+	// renames. Started by that name, it takes the real name back.
+	if fixed, err := update.Recover(exe); err != nil {
+		log.Printf("%v", err)
+	} else if fixed != exe {
+		log.Printf("update: an earlier update was interrupted; restored %s from the backup copy", fixed)
+		exe = fixed
+	}
 	if disabled {
+		update.CleanupOld(exe) // nothing else will manage the backup
 		log.Printf("update: disabled by -no-update")
 		return
 	}
 	u, err := update.New(update.Config{BaseURL: url, Version: version, Exe: exe})
 	if err != nil {
+		update.CleanupOld(exe)
 		log.Printf("update: disabled: %v", err)
 		return
 	}
@@ -65,18 +76,24 @@ func updateLabel() string {
 }
 
 // homeUpdate is what the home tab's update button shows: its text, and whether a
-// verified update is waiting. armed means the user already clicked once on a
-// ready update, which restarts go-nx and so ends every remote session.
+// restart into a newer build is waiting (verified and not yet installed, or
+// installed but not yet started). armed means the user already clicked once on
+// it, which restarts go-nx and so ends every remote session.
 func homeUpdate(armed bool) (label string, ready bool) {
 	if updater == nil {
 		return "", false
 	}
 	st := updater.Status()
-	ready = st.State == update.Ready
+	ready = restartPending(st)
 	if ready && armed {
 		return "Click again to restart now", true
 	}
 	return st.Label(), ready
+}
+
+// restartPending reports whether clicking the update button restarts go-nx.
+func restartPending(st update.Status) bool {
+	return st.State == update.Ready || st.State == update.Installed
 }
 
 // updateProblem is why the last update check failed, for the home tab's message
@@ -91,24 +108,29 @@ func updateProblem() string {
 	return ""
 }
 
-// updateClicked installs a ready update and restarts into it; otherwise it asks
-// for a check right away. Restarting ends every remote session, which is why it
-// only ever happens on a click.
+// updateClicked installs a ready update and restarts into it; an update that is
+// already installed (an earlier restart did not happen) is only restarted into;
+// otherwise it asks for a check right away. Restarting ends every remote session,
+// which is why it only ever happens on a click.
 func updateClicked() {
 	u := updater
 	if u == nil {
 		return
 	}
-	if u.Status().State != update.Ready {
+	switch u.Status().State {
+	case update.Ready:
+		if err := u.Install(); err != nil {
+			log.Printf("%v", err)
+			messageBox("go-nx", "Cannot install the update: "+err.Error())
+			return
+		}
+		log.Printf("update: installed, restarting")
+	case update.Installed:
+		log.Printf("update: restarting into the installed update")
+	default:
 		u.CheckNow()
 		return
 	}
-	if err := u.Install(); err != nil {
-		log.Printf("%v", err)
-		messageBox("go-nx", "Cannot install the update: "+err.Error())
-		return
-	}
-	log.Printf("update: installed, restarting")
 	// The exe path was taken at startup: after the rename the running process's
 	// own idea of its path may point at the .old file.
 	exe := u.Exe()

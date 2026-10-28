@@ -45,8 +45,9 @@ type HostInfo struct {
 type Client struct {
 	conn *quic.Conn
 	ctrl *quic.Stream
-	wmu  sync.Mutex
+	wmu  sync.Mutex // serializes writes to the control stream
 	cd   codec
+	out  *outbox // input waiting to be written by writeLoop
 
 	maxFrame int64         // largest update stream accepted, in bytes
 	stall    time.Duration // longest an update stream may go silent
@@ -114,7 +115,8 @@ func DialWith(ctx context.Context, addr string, id tls.Certificate, hosts *trust
 		conn.CloseWithError(0, "")
 		return nil, err
 	}
-	c := &Client{conn: conn, ctrl: ctrl, cd: cd, maxFrame: maxFrameBytes, stall: stallTimeout, welcome: make(chan struct{})}
+	c := &Client{conn: conn, ctrl: ctrl, cd: cd, out: newOutbox(), maxFrame: maxFrameBytes, stall: stallTimeout, welcome: make(chan struct{})}
+	go c.writeLoop()
 	if cd.version() == 0 {
 		c.setHost(HostInfo{}) // a v0 host never introduces itself
 	}
@@ -184,11 +186,52 @@ func (c *Client) AssumeCaps(caps proto.Caps) {
 
 func (c *Client) Close() { c.conn.CloseWithError(0, "") }
 
-// SendInput sends one user action.
+// SendInput queues one user action to be sent and returns at once: it never
+// waits for the network, so the caller (a window's update loop) is never frozen
+// by a host that stopped reading. Consecutive pointer moves are merged into the
+// latest. If the host is so far behind that the queue is full, everything but a
+// move is refused with ErrBacklog. Once the connection has failed the error is
+// returned here as well.
 func (c *Client) SendInput(in proto.Input) error {
+	return c.out.push(outMsg{
+		move:  in.Kind == proto.KindMouseMove && in.OpID == 0,
+		write: func(w io.Writer) error { return c.cd.writeInput(w, in) },
+	})
+}
+
+// writeLoop writes the queue to the control stream, in order. A write that takes
+// longer than the timeout means the link is dead; a message that was only half
+// written would make everything after it unreadable, so the connection is closed.
+func (c *Client) writeLoop() {
+	for {
+		select {
+		case <-c.out.wake:
+		case <-c.conn.Context().Done():
+			c.out.fail(errOutboxClosed)
+			return
+		}
+		for msgs := c.out.drain(); len(msgs) > 0; msgs = c.out.drain() {
+			for _, m := range msgs {
+				if err := c.writeCtrl(m.write); err != nil {
+					return
+				}
+			}
+		}
+	}
+}
+
+// writeCtrl writes one control message with a deadline. On failure the connection
+// is closed and the outbox refuses further input.
+func (c *Client) writeCtrl(write func(io.Writer) error) error {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
-	return c.cd.writeInput(c.ctrl, in)
+	c.ctrl.SetWriteDeadline(time.Now().Add(c.out.writeTimeout))
+	if err := write(c.ctrl); err != nil {
+		c.out.fail(err)
+		c.conn.CloseWithError(0, "control stream could not be written")
+		return err
+	}
+	return nil
 }
 
 // SendText asks the host to type text, as literal Unicode and independent of any
@@ -211,9 +254,7 @@ func (c *Client) SendText(opID uint64, text string) error {
 	if len(text) > c.cd.maxText() {
 		return errors.New("remote: text is longer than one message carries")
 	}
-	c.wmu.Lock()
-	defer c.wmu.Unlock()
-	return c.cd.writeText(c.ctrl, opID, text)
+	return c.out.push(outMsg{write: func(w io.Writer) error { return c.cd.writeText(w, opID, text) }})
 }
 
 // Run receives screen updates and receipts until the connection ends.
@@ -280,9 +321,7 @@ func (c *Client) recvFrames(ctx context.Context, onFrame func(*tile.Frame, []til
 		}
 		lastSeq = hdr.Seq
 		onFrame(frame, dirty)
-		c.wmu.Lock()
-		err = c.cd.writeAck(c.ctrl, hdr.Seq)
-		c.wmu.Unlock()
+		err = c.writeCtrl(func(w io.Writer) error { return c.cd.writeAck(w, hdr.Seq) })
 		if err != nil {
 			return err
 		}

@@ -13,7 +13,7 @@
 | 显示器范围 | 已实现（2026-10-28；此前只采主屏） | `-display <primary\|序号\|设备名如 \\.\DISPLAY2>` 或设置 `display` 选择要共享的显示器；采集用该显示器在虚拟桌面里的矩形做 `BitBlt`，所以左侧 / 上方（坐标为负）的副屏也行。注入侧对非主屏用 `MOUSEEVENTF_VIRTUALDESK` + 显示器原点；主屏沿用原来的映射。**一次只共享一块显示器**，没有会话内切换；多屏同时共享、显示器选择界面都没有 | `internal/capture`（`Displays`、`Open`、`SelectDisplay`）、`internal/inject`（`NewDisplay`）、`cmd/go-nx` |
 | 分辨率/显示器变化 | 已实现（2026-10-28；此前尺寸启动时固定） | 主机每秒让 `Screen.Refresh` 重新枚举显示器；尺寸或位置变了就重建采集面，下发新尺寸的画面（第一个更新是完整的），并通过 `OnSourceChanged` 重设注入器的坐标映射。查看器本来就按帧头的尺寸重建缓冲。显示器消失则按"抓屏失败"处理。真实显示器热插拔 / 改分辨率**未在实机上验证** | `internal/remote/host.go`、`internal/capture`、`cmd/go-nx/host_windows.go` |
 | DPI | 已实现（2026-10-28；此前是 system-aware 的副作用） | 进程在 `main` 最开头设为 **per-monitor v2**（`capture.EnableDPIAwareness`，退路 `SetProcessDPIAware`），采集尺寸和注入坐标都按物理像素。这也让 Ebiten 回到它自己的默认行为（以前是被 `NewScreen` 抢先设成 system-aware）。混合 DPI 多屏 / 125%–200% 缩放**未在实机上验证**（ACCEPTANCE H7、H8） | `internal/capture`、`cmd/go-nx/main_windows.go` |
-| 鼠标指针 | 已实现，按需（2026-10-28；此前未实现） | `BitBlt` 不含指针，所以 `Screen.SetCursorVisible(true)` 时用 `GetCursorInfo` + `GetIconInfo` + `DrawIconEx` 把它画进抓到的画面（热点和显示器原点已计入，`internal/cursor` 有几何测试）。**默认关**：只对在 v1 Hello 里带 `CapCursor` 的查看器打开（`DialOptions.WantCursor`，给没有自己指针的手机端用），因为自带指针的桌面查看器会看到两个。主机在 Welcome 里声明 `CapCursor` | `internal/capture`、`internal/remote/host.go`、`internal/cursor` |
+| 鼠标指针 | 已实现，按需（2026-10-28；此前未实现） | `BitBlt` 不含指针，所以 `Screen.SetCursorVisible(true)` 时用 `GetCursorInfo` + `GetIconInfo` + `DrawIconEx` 把它画进抓到的画面（热点和显示器原点已计入，`internal/cursor` 有几何测试）。**默认关**：只对在 v1 Hello 里带 `CapCursor` 的查看器打开（`DialOptions.WantCursor`，给没有自己指针的手机端用），因为自带指针的桌面查看器会看到两个。主机在 Welcome 里声明 `CapCursor`。测试里用注入的固定箭头（`pointerSource`）验证绘制位置与热点——CI runner 没有鼠标，系统不显示真实指针；真实指针的查询由 `TestTheSystemPointerQuery` 在有鼠标的机器上验证（H22） | `internal/capture`、`internal/remote/host.go`、`internal/cursor` |
 | 采集失败恢复 | 已实现（2026-10-28；此前 `Grab` 出错就结束会话） | 能刷新的源（`Refresher`）抓屏失败时会话保留，主机每个 tick 重试 `Refresh` 并上报一次 `capture paused`；恢复后上报 `capture resumed`，查看器期间保留最后一帧；超过 `GrabRetryFor`（默认 60 s）仍不恢复才结束会话。不能刷新的源仍是失败即结束。锁屏 / UAC 的真实行为**未在实机上验证**（ACCEPTANCE H9） | `internal/remote/host.go`、`internal/capture` |
 | 帧率 | 部分 | 固定帧率，默认 10（`-fps`）；Ack 驱动的停等流控 + 过期帧取消，不做质量自适应 | `cmd/go-nx/main_windows.go:99`、`host.go:148` |
 
@@ -43,6 +43,7 @@
 | 单控制者 | 已实现 | 同时只有一个控制者，新连接顶替旧连接，旧会话持有的按键/鼠标键被释放 | `internal/remote/input.go`、`cmd/go-nx/host_windows.go` |
 | 输入的收尾 | 已实现（2026-10-28） | 查看器断开 / 被顶替时，主机按固定顺序释放它按住的东西：先鼠标键、再按键，各自"后按的先放"（Ctrl+Shift+点击会被释放成：点击、Shift、Ctrl）；清理性的鼠标抬起带 `NoMove`，**不再把指针拖回当初按下的位置**；被桌面拒绝的释放保留（最多 64 个），下次使用时重试；会话静默超过 20 s（`HeldInputIdle`）仍持有按键 / 按钮就自动释放，不必等 45 s 的 QUIC 空闲超时；查看器按住按钮而指针不动时每 5 s 发一个保活移动。**Win+L 默认被主机拒绝**（回 Failed 回执；设置 `allow_win_l` = `1` 放行），其他 Win 组合不受影响 | `internal/remote/input.go`、`host.go`、`cmd/go-nx/host_windows.go` |
 | 查看器的输入 | 已改进（2026-10-28） | 同一帧里的多个按键事件按键盘顺序发送（普通键的抬起、修饰键按下、普通键按下、修饰键抬起），不再随 map 遍历顺序；释放同理，修饰键最后；按住按钮把指针拖出窗口时继续把位置夹到画面边缘并发送，所以松开不会跳；鼠标键按固定顺序；退出 / 更新重启时先关闭所有会话（任何 goroutine 调用都安全），主机立即释放；键表补上 F13–F24、Print Screen、ISO 键盘的额外键 | `internal/view`、`cmd/go-nx/viewer_windows.go`、`keys_windows.go`、`tray_windows.go` |
+| 查看器发送队列 | 已实现（2026-10-28；此前在界面线程里同步写） | `Client.SendInput` / `SendText` 只入队（上限 1024 条，满了返回 `ErrBacklog`，绝不阻塞调用方）；连续的纯移动会被合并为最后一个，按下 / 抬起 / 滚轮 / 按键保序不丢；专门的 goroutine 写控制流，每次写有 10 s 截止时间，超时即关闭连接（`Run` 随之返回），不会永远卡着。确认回执也走同一条写路径 | `internal/remote/outbox.go`、`client.go` |
 | 断线后重连 | 部分 | 首次拨号最多尝试 4 次（握手时限 2/3/4/6 s）；断线后需手动重连 | `cmd/go-nx/tabs_windows.go:88` |
 
 ## 4. 安全与配对
@@ -74,7 +75,7 @@
 | mDNS 发现 / 二维码配对 | 未实现（不做） |
 | view/control 分级、国密、视频编码、DATAGRAM/FEC、Windows 服务 | 未实现（不做） |
 | Win7 / Win8 | 不支持（`minimal-plan.md`） |
-| 自更新 | 已实现（托盘；Windows 实机流程**未验证**），见 `release.md` |
+| 自更新 | 已实现并加固（2026-10-28）。托盘与主页按钮；`Install` 前重验 `.new`、单次安装（`Installed` 状态）、第二次改名重试、`.old` 在新版本运行满首次延迟后才清理、被打断时从 `.old` 启动自愈（`update.Recover`）。真实 Windows 上"改名正在运行的 exe"由 CI 验证；**用户 PC 上的完整流程仍未验证**（H2、H3、H26），见 `release.md` | `internal/update`、`cmd/go-nx/update_windows.go` |
 
 ## 6. 代码结构
 

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +28,9 @@ type offer struct {
 	payload  []byte // bytes the manifest describes
 	served   []byte // bytes the download endpoint sends; payload when nil
 	signedBy ed25519.PrivateKey
+
+	// A manifest that is validly signed but names something else than was asked for.
+	app, platform, channel string
 }
 
 type fixture struct {
@@ -35,10 +39,21 @@ type fixture struct {
 	exe  string
 	dir  string
 	keys []string
+
+	mu        sync.Mutex
+	downloads []string // the Range header of every download request ("" for a whole file)
+}
+
+// downloaded reports the download requests the server has seen.
+func (f *fixture) downloaded() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.downloads...)
 }
 
 func newFixture(t *testing.T, o offer) *fixture {
 	t.Helper()
+	f := &fixture{}
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +80,7 @@ func newFixture(t *testing.T, o offer) *fixture {
 		}
 		sum := sha256.Sum256(o.payload)
 		m := &relproto.Manifest{
-			App: AppID, Platform: Platform, Channel: relproto.DefaultChannel,
+			App: orDefault(o.app, AppID), Platform: orDefault(o.platform, Platform), Channel: orDefault(o.channel, relproto.DefaultChannel),
 			VersionCode: code, VersionName: o.version, File: "go-nx.exe",
 			Size: int64(len(o.payload)), SHA256: hex.EncodeToString(sum[:]),
 			MinVersionCode: o.min, Notes: "test", PublishedAt: time.Now().UTC().Format(time.RFC3339),
@@ -76,6 +91,13 @@ func newFixture(t *testing.T, o offer) *fixture {
 		json.NewEncoder(w).Encode(relproto.CheckResult{App: AppID, Platform: Platform, Channel: m.Channel, Manifest: m})
 	})
 	mux.HandleFunc("/v1/apps/go-nx/win-x64/releases/", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.downloads = append(f.downloads, r.Header.Get("Range"))
+		f.mu.Unlock()
+		// The real server names the build with a strong ETag, which is what lets a
+		// client resume with If-Range.
+		sum := sha256.Sum256(o.payload)
+		w.Header().Set("ETag", `"`+hex.EncodeToString(sum[:])+`"`)
 		http.ServeContent(w, r, "go-nx.exe", time.Time{}, strings.NewReader(string(served)))
 	})
 	srv := httptest.NewServer(mux)
@@ -86,12 +108,21 @@ func newFixture(t *testing.T, o offer) *fixture {
 	if err := os.WriteFile(exe, []byte("old build"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return &fixture{srv: srv, pub: pub, exe: exe, dir: dir, keys: []string{relproto.EncodePublicKey(pub)}}
+	f.srv, f.pub, f.exe, f.dir, f.keys = srv, pub, exe, dir, []string{relproto.EncodePublicKey(pub)}
+	return f
+}
+
+// orDefault returns v, or def when v is empty.
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
 }
 
 func (f *fixture) updater(t *testing.T, version string) *Updater {
 	t.Helper()
-	u, err := New(Config{BaseURL: f.srv.URL, Version: version, Exe: f.exe, Keys: f.keys, FirstDelay: 10 * time.Millisecond, Interval: time.Hour})
+	u, err := New(Config{BaseURL: f.srv.URL, Version: version, Exe: f.exe, Keys: f.keys, FirstDelay: 10 * time.Millisecond, Interval: time.Hour, RetryWait: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
