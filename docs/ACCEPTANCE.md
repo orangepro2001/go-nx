@@ -1,6 +1,6 @@
 # go-nx 验收状态
 
-- 更新：2026-10-28，阶段 0–4 与回移 B0–B5 完成之后（最新发布 0.4.0；其后的改动——异步发送队列、更新器加固、nx-host / mobile 等——已提交，发布另行进行）
+- 更新：2026-10-28，阶段 0–7 的自动化部分、回移 B0–B5 和 U0 完成之后。最新发布 **0.5.0**（含异步发送队列、更新器加固、多显示器等）；`nx-host` / `mobile` / `tools/*` 不在 `go-nx.exe` 里，只构建不发布
 - 原则：只写**实际跑过**的东西。自动化通过 ≠ 真实桌面体验正确；合成测试证明协议与逻辑，不证明真实 GDI / `SendInput` / 物理显示器。
 - "待验证"表示没有证据，不是"大概没问题"。
 
@@ -10,7 +10,7 @@
 |---|---|---|
 | `gofmt -l .` | 干净 | |
 | `go vet ./...`、`GOOS=windows go vet ./...` | 通过 | |
-| `go test -race -cover ./...` | 全部通过 | 覆盖率：proto 90.0%、update 89.5%、trust 88.6%、remote 85.9%、tile 83.1%、profiles 81.6%、logging 68.6%、ui 30.8% |
+| `go test -race -cover ./...` | 全部通过 | 覆盖率（Linux 构建；`capture` / `inject` 的 Windows 专用代码不在其中，它们靠 CI 的真实桌面测试）：hostd 91.8%、mobile 95.4%、netem 93.8%、remote 92.0%、update 93.5%、proto 93.6%、probe 91.7%、trust 91.9%、tile 87.4%、cmd/nx-probe 87.2%、cmd/nx-host 84.8%、profiles 84.8%、fsutil 78.8%、logging 68.6%、ui 31.6%、tools/u0 19.1%（窗口部分只在 CI 里跑）。另有 fuzz：`proto` 4 个目标、`tile` 1 个，各跑 15 s 无新崩溃 |
 | 核心包交叉编译 | 通过 | `proto/tile/trust/remote` 在 linux、windows、darwin、`android/arm64` 上能编译 |
 | `scripts/e2e-update.sh` | 通过（2026-10-28，更新器加固后重跑） | 真实 `relhub` + 临时目录 + 回环端口 |
 | `scripts/e2e-host-probe.py`（真实的 `nx-host` 与 `nx-probe` 两个进程） | 通过（Linux）；CI 的 Linux 与 Windows 两个 job 都跑 | 配对、v1 与 v0 连接、画面标记完好、8 项输入全有回执、错误指纹在握手时被拒、错误码被拒并报 `denied`、状态计数、`stop` 后退出码 0、stdout 每行都是合法事件。**Wine 里跑不了**：quic-go 在 Wine 上监听 UDP 会报 `wsaioctl: winapi error #10045`（Wine 的限制，不是 go-nx 的问题），所以 Windows 版靠 `windows-latest` |

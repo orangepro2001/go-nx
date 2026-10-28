@@ -11,16 +11,17 @@ go-nx：Windows 10/11 上的轻量局域网远程控制。纯 Go、无 cgo、单
 
 ## 当前状态（2026-10-28）
 
-- 已接入本机 release-publish：app `go-nx`，平台 `win-x64`，**0.3.0（versionCode 300）是线上最新**（0.1.0、0.2.0 仍在列表里）。0.2.0 含阶段 1 的安全改动和主页更新按钮；0.3.0 加了主页的**严格 / 开放模式按钮**。用户已报告从 0.1.0 更新到 0.2.0。
-- 应用内自更新已实现并通过测试（入口：主页右上角按钮，0.2.0 起；系统托盘右键菜单，0.1.0 起）；**Windows 实机上的替换 exe、重启流程还没验证过**。现在可以用真实版本试：装着 0.1.0 的机器，托盘菜单点更新项 → `Restart to update to v0.2.0`。
-- 当前工作是 [`ROADMAP.md`](ROADMAP.md) 的开发计划：**阶段 0 完成**（基线、状态文档、CI）；**阶段 1 已完成**，其内容：「恶意主机上限 + fuzz」「JSON 原子写 + 损坏文件隔离」，「撤销已信任设备 / 忘记主机身份」（逐设备列表还没有）。「按来源限流 + 未认证连接上限」已完成。「默认开启认证」「一次性配对码」已完成。「首次连接指纹核对」已完成。「监听地址可选（`-listen`）」已完成，**阶段 1 完成**（密码哈希 + DPAPI 经评估暂缓，理由见 ROADMAP「暂缓项」）。下一步是阶段 2（协议规范与版本协商）。
-- 所有提交已推送到 `origin main`；CI（`.github/workflows/ci.yml`，linux + windows-latest）在 `820d1f7` 上两个作业都通过。
-- 全局 git 身份：`orangepro2001 <yangziyi0801@gmail.com>`（2026-10-28 设置）。`98bda14` 的作者是 `tony`，没有改写。
+- **线上最新是 0.5.0（versionCode 500，`go-nx-0.5.0-win-x64.exe`，18.5 MiB，sha256 `552708ee…fe41e`）**。0.1.0–0.4.0 仍在列表里。0.5.0 在 0.4.0 之上加了：多显示器与分辨率变化、帧内指针（按需）、确定的释放顺序 / Win+L 默认拒绝 / 逐像素精确的绝对坐标、异步发送队列与关闭时输入先到主机、更新器加固。发布后用真实更新器代码、默认地址和内置公钥独立验证过（假装 0.4.0 → 下载 19,418,624 字节、sha256 与本地一致；假装 0.5.0 → 最新）。
+- **路线图阶段 0–4、6、7 与回移 B0–B5 全部完成**（见 [`ROADMAP.md`](ROADMAP.md)、[`backport-ledger.md`](backport-ledger.md)）；**阶段 5** 只差用户在自己的 PC 上做 H6 的 A/B（开关 `-layered=false` 已在，默认值未变）。**U0 技术验证已完成**（[`ui-baseline.md`](ui-baseline.md)），它改了界面方案的内存预算与字体策略；**界面代码仍然没有**（用户要求 UI 阶段只写文档），等用户明确说开始 U1。
+- 本次任务的完整交接在 [`handoff-2026-10-28-pre-ui-work.md`](handoff-2026-10-28-pre-ui-work.md)：做了什么、怎么验证的、**没验证什么**、需要你在自己 PC 上做的清单（`ACCEPTANCE.md` H1–H29，⚠ 的会改系统状态）、遗留。
+- 没有验证、要小心：**用户 PC 上的任何一项真实行为**（主页 / 严格模式 / 更新按钮的绘制和点击、真实 GDI 抓屏与 `SendInput`、多显示器、改分辨率、指针闪烁、更新替换并重启、异步发送队列的手感）；AAR 的完整构建（本机没有 Android SDK/NDK）。CI 的 `windows-latest` 只证明协议、注入与抓屏的字节级行为、改名运行中的 exe、`nx-host` 的完整流程、Ebiten + DirectX 软件渲染下的 U0。
+- 所有提交已推送到 `origin main`；CI（linux + windows-latest）在 Release 提交 `0b778df` 上通过。
+- 全局 git 身份：`orangepro2001 <yangziyi0801@gmail.com>`。`98bda14` 的作者是 `tony`，没有改写。
 
 ## 工作约束（用户 2026-10-28 明确）
 
 - **本仓库每完成一项可交付的工作就自动 commit + push 到 `origin main`**，无需询问。先跑完检查，通过才提交；只按文件名暂存，不用 `git add -A`，不 amend / reset / force push。
-- 这条授权**不含**：`release.sh` 发新版本、打 tag / GitHub Release、装依赖、改认证——这些仍需单独问。
+- 这条授权**不含**：打 tag / GitHub Release、装依赖、改认证、公钥轮换——这些仍需单独问。（发新版本由下一条覆盖。）
 - **不要改动 NightDesk 侧任何源码**（`/home/tony/dev/nightdesk-*`、`/home/tony/dev/native` 等）：那个项目不是最新版本，只读，当回移参考；改它对 go-nx 的依赖留到以后。
 - **每完成一项改变程序行为的改动就发布一个新版本**（用户 2026-10-28 要求）：先提交并推送，再在干净树上 `scripts/ship.sh --bump patch|minor "说明"`（它会等 CI 绿才发布并验证）。只改文档 / CI / 测试的提交不发。`--dry-run` 只看计划。
 - 项目是**单一上游**：NightDesk 的通用修复回移到这里。协议要保持对 NightDesk 已发布客户端的兼容（`MsgText=4`、`KindWheelH=7`）。
