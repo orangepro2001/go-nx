@@ -9,14 +9,14 @@ go-nx：Windows 10/11 上的轻量局域网远程控制。纯 Go、无 cgo、单
 配置、身份、信任列表、日志都在 `%AppData%\go-nx\`（`go-nx.log`）。单实例用命名互斥量 `Local\go-nx-single-instance`。
 仓库：`git@github.com:orangepro2001/go-nx.git`，本地 `main`。设计文档在 `docs/`（`minimal-plan.md` 是定稿范围）。
 
-## 当前状态（2026-10-28）
+## 当前状态（2026-10-28 晚）
 
-- **线上最新是 0.5.0（versionCode 500，`go-nx-0.5.0-win-x64.exe`，18.5 MiB，sha256 `552708ee…fe41e`）**。0.1.0–0.4.0 仍在列表里。0.5.0 在 0.4.0 之上加了：多显示器与分辨率变化、帧内指针（按需）、确定的释放顺序 / Win+L 默认拒绝 / 逐像素精确的绝对坐标、异步发送队列与关闭时输入先到主机、更新器加固。发布后用真实更新器代码、默认地址和内置公钥独立验证过（假装 0.4.0 → 下载 19,418,624 字节、sha256 与本地一致；假装 0.5.0 → 最新）。
-- **路线图阶段 0–4、6、7 与回移 B0–B5 全部完成**（见 [`ROADMAP.md`](ROADMAP.md)、[`backport-ledger.md`](backport-ledger.md)）；**阶段 5** 只差用户在自己的 PC 上做 H6 的 A/B（开关 `-layered=false` 已在，默认值未变）。**U0 技术验证已完成**（[`ui-baseline.md`](ui-baseline.md)），它改了界面方案的内存预算与字体策略；**界面代码仍然没有**（用户要求 UI 阶段只写文档），等用户明确说开始 U1。
-- 本次任务的完整交接在 [`handoff-2026-10-28-pre-ui-work.md`](handoff-2026-10-28-pre-ui-work.md)：做了什么、怎么验证的、**没验证什么**、需要你在自己 PC 上做的清单（`ACCEPTANCE.md` H1–H29，⚠ 的会改系统状态）、遗留。
-- 没有验证、要小心：**用户 PC 上的任何一项真实行为**（主页 / 严格模式 / 更新按钮的绘制和点击、真实 GDI 抓屏与 `SendInput`、多显示器、改分辨率、指针闪烁、更新替换并重启、异步发送队列的手感）；AAR 的完整构建（本机没有 Android SDK/NDK）。CI 的 `windows-latest` 只证明协议、注入与抓屏的字节级行为、改名运行中的 exe、`nx-host` 的完整流程、Ebiten + DirectX 软件渲染下的 U0。
-- 所有提交已推送到 `origin main`；CI（linux + windows-latest）在 Release 提交 `0b778df` 上通过。
-- 全局 git 身份：`orangepro2001 <yangziyi0801@gmail.com>`。`98bda14` 的作者是 `tony`，没有改写。
+- **线上最新**：`go-nx` **0.7.0**（新界面，见下；版本号与哈希以 `docs/handoff-2026-10-28-ui-implementation.md` 和 `release.md` 为准）、`go-nx-core` **0.1.0**（`nx-host` / `nx-probe` / 契约的 zip，**单独的应用**，`CORE_VERSION`）。0.6.0 是动态帧率；0.5.0 及更早仍在列表里。
+- **这一轮做了三件事**（用户："开始实现ui。核心文件作为单独应用发布，要动态帧率。"）：①**动态帧率**（0.6.0）：画面在变 10 fps，控制端操作 30 fps，静止 3 s 后 2 fps，输入立刻唤醒；②**核心单独发布**：`go-nx-core`，版本独立，zip 可复现，`scripts/ship.sh --core`；③**新界面**（U1–U4，0.7.0）：`internal/app` 是可移植的整个应用（页面、对话框、会话、连接流程），`internal/ui/{theme,i18n,text,kit,gfx}` 是工具箱，`cmd/go-nx` 只剩 Windows 适配；旧 `internal/ui` 已删除。
+- **新界面的验证**：布局（四种语言含伪语言 × 四种窗口尺寸）、行为（各流程用假的主机 / 连接 / 平台）、GPU（颜色与朝向、形状位置、裁剪，Xvfb 上与 Windows 运行器上都跑）、真实 `go-nx.exe` 在 Windows 运行器上启动到第一帧（冒烟测试，阻塞）、截图 artifact（`ui-linux`、`ui-windows`，用真实字体）。**没有的**：任何一次在你的 PC 上由人使用——`ACCEPTANCE.md` H31–H34。
+- 路线图阶段 0–4、6、7 与回移 B0–B5 完成；阶段 5 只差用户 H6；U0–U4 完成，**U5 / U6 的其余部分**（光标捕获、着色器做颜色转换、高对比度、性能回归门槛、`Ctrl+K`、设备在线状态、"停止共享"）未做。
+- 没有验证、要小心：用户 PC 上的任何真实行为；输入法（H29、H32）；AAR 的完整构建。
+- 所有提交已推送到 `origin main`。全局 git 身份：`orangepro2001 <yangziyi0801@gmail.com>`。
 
 ## 工作约束（用户 2026-10-28 明确）
 
@@ -67,6 +67,8 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 | `.github/workflows/ci.yml` | linux（gofmt / vet / -race / 可移植核心交叉编译）+ windows-latest（build / test / 桌面冒烟） |
 | `internal/{capture,inject}/*_windows_test.go` | 真实桌面冒烟；需 `GO_NX_WINDOWS_E2E=1`，会画窗口、动光标，**别在日常 PC 上开** |
 | `README.md` | 简介、限制、构建与运行 |
+| `internal/app/` | **整个应用**（可移植，Linux 上能测试和截图）：`app.go` 状态与 `Step`、`build.go` 根布局与侧栏、`pages_*.go` 各页、`tabs.go` 拨号 / 重连、`session.go` 会话画面与输入转发、`toolbar.go` 会话工具条、`game.go` Ebiten 游戏循环与输入采集、`ime.go` 输入法适配、`preview.go` 截图 / 测试用的假数据 |
+| `internal/ui/{theme,i18n,text,kit,gfx}` | 令牌 / 三语字符串 / 字体与排版 / 控件工具箱 / Ebiten 画布（着色器、图标）；`tools/uipreview` 把每个界面画成 PNG（`xvfb-run -a go run ./tools/uipreview -out /tmp/ui`） |
 | `internal/hostd/`、`cmd/nx-host/` | 无界面主机（sidecar）：JSON Lines 控制接口，契约 `docs/nx-host.md`；`-test-mode` 在任何机器上安全 |
 | `internal/{synth,logsink,probe}/`、`cmd/nx-probe/` | 合成画面（五种场景 + 四角颜色标记）、只记录输入的注入器、验收探针（固定指纹连接、核对回执与画面） |
 | `mobile/`、`scripts/build-aar.sh` | gomobile 的手机端核心，契约 `docs/mobile.md`；`mobile/api.golden` 固定 Java API；`--check-api` 不需要 SDK/NDK |
@@ -78,7 +80,7 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 
 ## release-publish 服务（本机）
 
-- systemd 用户单元 `release-publish.service`，监听 `127.0.0.1:18790`，经 tailscale serve 暴露为 `https://tony-ai-pc-1.tail9f7f1f.ts.net/release`（仅 tailnet 内）。
+- 2026-10-28 起由 **podman 容器** `release-publish` 运行（管理用 `~/dev/release-publish/deploy/container.sh`；旧的 systemd 用户单元已停用，别去启动它，它会抢 18790），监听 `127.0.0.1:18790`，经 tailscale serve 暴露为 `https://tony-ai-pc-1.tail9f7f1f.ts.net/release`（仅 tailnet 内）。`relhub` 命令不变。
 - 数据目录 `~/.local/share/release-publish/`（`admin.token`、`keys/signing.ed25519`、`apps/`）；密钥备份 `~/backups/release-publish-keys/`。本文档**不记录**任何 token 或私钥。
 - 服务公钥 `k4thZR+OVYSGAT/9j5F39csgGqTL0t3X6GYdNCmuRI8=`（keyId `f5faa9f9858b789f`），已编译进 `internal/update.PinnedKeys`。
 - 服务自己的文档：`/home/tony/dev/release-publish/docs/{USAGE,API,SDK}.md`。服务里另有尚未导入的 nightdesk / codex-harness / clipbridge（`relhub import ...`），与 go-nx 无关。

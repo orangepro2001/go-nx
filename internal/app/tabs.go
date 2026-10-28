@@ -216,67 +216,77 @@ func shortID(fp string) string { return fp[:min(16, len(fp))] }
 // pollTabs moves tabs between connecting, live and error as results arrive.
 func (a *App) pollTabs() {
 	for i, t := range a.tabs {
-		switch t.state {
-		case tabConnecting:
-			if t.confirm == nil {
-				select {
-				case req := <-t.confirmReq:
-					t.confirm = req
-				default:
-				}
-			}
+		before := t.state
+		hadConfirm := t.confirm != nil
+		a.pollTab(i, t)
+		if t.state != before || (t.confirm != nil) != hadConfirm {
+			a.ui.Invalidate() // what the tab shows has changed
+		}
+	}
+}
+
+// pollTab moves one tab along.
+func (a *App) pollTab(i int, t *tab) {
+	switch t.state {
+	case tabConnecting:
+		if t.confirm == nil {
 			select {
-			case r := <-t.dial:
-				if r.err != nil {
-					t.state = tabError
-					t.err, t.hostChanged = describe(a.tr, r.err)
-					continue
-				}
-				t.sess = newSession(r.conn, &a.nextOp, a.Invalidate)
-				t.state = tabLive
-				t.sess.setVisible(a.active == i+1)
+			case req := <-t.confirmReq:
+				t.confirm = req
 			default:
 			}
-		case tabLive:
-			select {
-			case <-t.sess.done:
-				t.sess.mu.Lock()
-				err := t.sess.err
-				t.sess.mu.Unlock()
-				t.sess.setVisible(false)
-				liveSessions.Delete(t.sess)
-				log.Printf("session %s ended: %v", t.addr, err)
-				reason, _ := describe(a.tr, err)
-				t.err = a.tr.T(keyErrDisconnected, "reason", reason)
-				if a.autoReconnect() && reconnectable(err) && t.sess.hasPicture() {
-					a.startReconnect(t)
-				} else {
-					t.state, t.sess = tabError, nil
-				}
-			default:
+		}
+		select {
+		case r := <-t.dial:
+			if r.err != nil {
+				t.state = tabError
+				t.err, t.hostChanged = describe(a.tr, r.err)
+				return
 			}
-		case tabReconnecting:
-			select {
-			case r := <-t.dial:
-				switch {
-				case r.err == nil:
-					ns := newSession(r.conn, &a.nextOp, a.Invalidate)
-					ns.mode, ns.sized = t.old.mode, true // the window keeps its size, the picture its mode
-					t.sess, t.old, t.state = ns, nil, tabLive
-					ns.setVisible(a.active == i+1)
-					log.Printf("session %s is back", t.addr)
-				case errors.Is(r.err, errStopped):
-					t.state, t.sess, t.old = tabError, nil, nil
-				case errors.Is(r.err, errGaveUp):
-					t.err = a.tr.T(i18n.KeyReconnectGaveUp, "n", maxReconnects) + " " + t.err
-					t.state, t.sess, t.old = tabError, nil, nil
-				default:
-					reason, changed := describe(a.tr, r.err)
-					t.err, t.hostChanged = reason, changed
-					t.state, t.sess, t.old = tabError, nil, nil
-				}
-			default:
+			t.sess = newSession(r.conn, &a.nextOp, a.Invalidate)
+			t.state = tabLive
+			t.sess.setVisible(a.active == i+1)
+		default:
+		}
+	case tabLive:
+		select {
+		case <-t.sess.done:
+			t.sess.mu.Lock()
+			err := t.sess.err
+			t.sess.mu.Unlock()
+			t.sess.setVisible(false)
+			liveSessions.Delete(t.sess)
+			log.Printf("session %s ended: %v", t.addr, err)
+			reason, _ := describe(a.tr, err)
+			t.err = a.tr.T(keyErrDisconnected, "reason", reason)
+			if a.autoReconnect() && reconnectable(err) && t.sess.hasPicture() {
+				a.startReconnect(t)
+			} else {
+				t.state, t.sess = tabError, nil
 			}
+		default:
+		}
+	case tabReconnecting:
+		select {
+		case r := <-t.dial:
+			switch {
+			case r.err == nil:
+				ns := newSession(r.conn, &a.nextOp, a.Invalidate)
+				ns.mode, ns.sized = t.old.mode, true // the window keeps its size, the picture its mode
+				t.sess, t.old, t.state = ns, nil, tabLive
+				ns.setVisible(a.active == i+1)
+				log.Printf("session %s is back", t.addr)
+			case errors.Is(r.err, errStopped):
+				t.state, t.sess, t.old = tabError, nil, nil
+			case errors.Is(r.err, errGaveUp):
+				t.err = a.tr.T(i18n.KeyReconnectGaveUp, "n", maxReconnects) + " " + t.err
+				t.state, t.sess, t.old = tabError, nil, nil
+			default:
+				reason, changed := describe(a.tr, r.err)
+				t.err, t.hostChanged = reason, changed
+				t.state, t.sess, t.old = tabError, nil, nil
+			}
+		default:
 		}
 	}
 }
