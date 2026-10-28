@@ -11,7 +11,7 @@ go-nx：Windows 10/11 上的轻量局域网远程控制。纯 Go、无 cgo、单
 
 ## 当前状态（2026-10-28）
 
-- 已接入本机 release-publish：app `go-nx`，平台 `win-x64`，**0.2.0（versionCode 200）是线上最新**（0.1.0 仍在列表里）。0.2.0 含阶段 1 的全部安全改动和主页的版本号 / `Check for updates` 按钮。
+- 已接入本机 release-publish：app `go-nx`，平台 `win-x64`，**0.3.0（versionCode 300）是线上最新**（0.1.0、0.2.0 仍在列表里）。0.2.0 含阶段 1 的安全改动和主页更新按钮；0.3.0 加了主页的**严格 / 开放模式按钮**。用户已报告从 0.1.0 更新到 0.2.0。
 - 应用内自更新已实现并通过测试（入口：主页右上角按钮，0.2.0 起；系统托盘右键菜单，0.1.0 起）；**Windows 实机上的替换 exe、重启流程还没验证过**。现在可以用真实版本试：装着 0.1.0 的机器，托盘菜单点更新项 → `Restart to update to v0.2.0`。
 - 当前工作是 [`ROADMAP.md`](ROADMAP.md) 的开发计划：**阶段 0 完成**（基线、状态文档、CI）；**阶段 1 已完成**，其内容：「恶意主机上限 + fuzz」「JSON 原子写 + 损坏文件隔离」，「撤销已信任设备 / 忘记主机身份」（逐设备列表还没有）。「按来源限流 + 未认证连接上限」已完成。「默认开启认证」「一次性配对码」已完成。「首次连接指纹核对」已完成。「监听地址可选（`-listen`）」已完成，**阶段 1 完成**（密码哈希 + DPAPI 经评估暂缓，理由见 ROADMAP「暂缓项」）。下一步是阶段 2（协议规范与版本协商）。
 - 所有提交已推送到 `origin main`；CI（`.github/workflows/ci.yml`，linux + windows-latest）在 `820d1f7` 上两个作业都通过。
@@ -58,6 +58,7 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 | `docs/release.md` | 发布流程（含每次改动的 `ship.sh`）、更新入口在哪、客户端行为、公钥轮换、测试 |
 | `scripts/ship.sh` | 一条命令发布一次改动：预检线上版本 → 升 `VERSION` → 提交推送 → 等 CI → 发布 → 验证 |
 | `docs/ROADMAP.md` | 开发路线图与各阶段状态（**先读**） |
+| `docs/ui-redesign.md` | UI 重设计方案（只有设计，没有代码）：技术栈决策、设计令牌、界面、性能预算、U0–U6 计划、待你决定的问题 |
 | `docs/IMPLEMENTED.md` | 实现状态，以代码为准，带文件:行；设计文档只是意图 |
 | `docs/ACCEPTANCE.md` | 已验证 / 未验证；CI runner 实测结果；人工实机清单 H1–H12 |
 | `docs/review-2026-10-28-nightdesk-integration-notes.md` | 对 NightDesk 集成经验文档的逐条核对与发现的缺陷 |
@@ -95,11 +96,13 @@ relhub check -app go-nx -platform win-x64 -code 100; echo $?   # 0 最新，10 �
 
 1. **阶段 1 安全基线**（下一个）：默认开认证（含旧设置迁移）、一次性配对码 + 指纹核对、校验前不发密码、密码哈希 + DPAPI、撤销设备、按来源限流、恶意主机上限、JSON 原子写、fuzz。
 2. 阶段 2 协议规范与版本协商 → 阶段 3 回移 NightDesk 修复（只读快照 `/home/tony/dev/nightdesk-native-ux-20261028`）。
-3. 仍待用户在 Windows 上做：`ACCEPTANCE.md` §3 的 H1–H17（含自更新 H1–H3 和阶段 1 新增界面 H13–H17）。
-4. 可选：go-nx 专用 CI token；窗口主页也显示更新提示；Windows 代码签名；把签名私钥备份另存一份到本机之外。
+3. UI 重设计：等用户对 `ui-redesign.md` 第 11 节的回复，再做 U0 技术验证。
+4. 仍待用户在 Windows 上做：`ACCEPTANCE.md` §3 的 H1–H17（含自更新 H1–H3 和阶段 1 新增界面 H13–H17）。
+5. 可选：go-nx 专用 CI token；窗口主页也显示更新提示；Windows 代码签名；把签名私钥备份另存一份到本机之外。
 
 ## 最近一份交接文档
 
-[`docs/handoff-2026-10-28-release-0.2.0.md`](handoff-2026-10-28-release-0.2.0.md)：回答"有没有自动推送更新"、主页更新按钮、`ship.sh`、0.2.0 的发布与独立验证。
+[`docs/handoff-2026-10-28-mode-button-ui-plan.md`](handoff-2026-10-28-mode-button-ui-plan.md)：模式按钮（0.3.0）与 UI 重设计方案。
+更早：[`docs/handoff-2026-10-28-release-0.2.0.md`](handoff-2026-10-28-release-0.2.0.md)：回答"有没有自动推送更新"、主页更新按钮、`ship.sh`、0.2.0 的发布与独立验证。
 更早：[`docs/handoff-2026-10-28-phase1-security-baseline.md`](handoff-2026-10-28-phase1-security-baseline.md)：阶段 1（安全基线）的成果、行为变更（发布前要写进说明）、验证、问题、取舍、经验。
 更早：[`docs/handoff-2026-10-28-phase0-baseline.md`](handoff-2026-10-28-phase0-baseline.md)（阶段 0）、[`docs/handoff-2026-10-28-release-publish.md`](handoff-2026-10-28-release-publish.md)（接入 release-publish）。
