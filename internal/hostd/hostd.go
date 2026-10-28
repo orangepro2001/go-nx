@@ -69,14 +69,16 @@ func PatternBackend(scene synth.Scene, w, h int, logger *log.Logger) (Backend, *
 
 // Config is how a host is set up.
 type Config struct {
-	Listen    string  // UDP address to listen on; port 0 lets the system choose
-	StateDir  string  // identity, paired devices; created if missing
-	FPS       int     // capture rate while nothing happens; default remote.DefaultFPS
-	Boost     int     // capture rate while the viewer is working; 0 means no boost
-	NoAuth    bool    // open mode from the start: anyone who can reach the host is let in
-	AllowWinL bool    // let a viewer press Win+L (it locks the host)
-	Version   string  // the program's version, for the ready event
-	Backend   Backend // what to show and where input goes
+	Listen    string        // UDP address to listen on; port 0 lets the system choose
+	StateDir  string        // identity, paired devices; created if missing
+	FPS       int           // capture rate while nothing happens; default remote.DefaultFPS
+	Boost     int           // capture rate while the viewer is working; 0 means no boost
+	Idle      int           // capture rate once nothing has happened for IdleAfter; 0, or not below FPS, means no slow-down
+	IdleAfter time.Duration // how long nothing must happen before Idle applies; default 3 s
+	NoAuth    bool          // open mode from the start: anyone who can reach the host is let in
+	AllowWinL bool          // let a viewer press Win+L (it locks the host)
+	Version   string        // the program's version, for the ready event
+	Backend   Backend       // what to show and where input goes
 	Log       *log.Logger
 }
 
@@ -278,6 +280,8 @@ func (h *Host) serve(conn *quic.Conn) {
 	err := remote.Serve(h.runCtx, conn, h.cfg.Backend.Source, h.cfg.Backend.Injector, h.dedup, remote.Options{
 		FPS:             h.cfg.FPS,
 		FPSFn:           h.captureFPS,
+		IdleFPS:         h.cfg.Idle,
+		IdleAfter:       h.cfg.IdleAfter,
 		Check:           h.check,
 		InputController: h.input,
 		Gate:            h.gate,

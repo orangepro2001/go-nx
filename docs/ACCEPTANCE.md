@@ -79,6 +79,7 @@
 | H27 | AAR 构建与 Android 联调 | 装好 Android SDK/NDK 与 `gomobile` 后 `scripts/build-aar.sh`；集成到手机 App，扫码 / 输入指纹和配对码连接一台主机 | 构建是否成功；画面颜色（应用交换红蓝并置 alpha=255）；触摸移动 / 点击 / 滚动 / 文本；松开按钮时主机指针是否停在原地 | 待验证（本机没有 Android 工具链；Java API 已由 `--check-api` 固定） |
 | H28 ⚠ | `nx-host` 在真实 Windows 桌面上 | `nx-host.exe -listen 127.0.0.1:7000 -pair`，另一个窗口 `nx-probe -addr 127.0.0.1:7000 -fingerprint <ready.identity> -code <pairing.code> -input`。**`-input` 会真的动鼠标、在屏幕中央点击、滚轮、按 A 并输入文字到当前获得焦点的窗口**——先打开一个空记事本 | 画面能收到；`inputs: 8 sent, 8 receipts`；记事本里出现 `go-nx probe 你好`；`nx-host` 退出码 0 | 待验证（`-test-mode` 的完整流程已在 CI 验证；真实 GDI / `SendInput` 在 `nx-host` 里没跑过） |
 | H29 | U0 在你的 PC 上（真实 GPU、输入法） | ① 在你的 PC 上运行 `go run ./tools/u0 all -seconds 60 -png u0.png -out u0.json`（会开一个小窗口，约 3 分钟；`input` 一项会往窗口里注入按键，所以运行时别动键盘）；② 若装有中文 / 韩文输入法：写一个临时用例或直接用 Ebiten 的 `examples/textinput`，用输入法打几个词，看预编辑文本、候选窗位置、提交；③ 在一台装有韩文输入法的远端上，用现有注入路径发 VK_HANGUL（0x15）/ VK_HANJA（0x19），看远端输入法是否切换 | 真实 GPU 上的空闲 CPU（60 s）、首帧时间、空窗口的私有内存、tile 上传、着色器是否通过；输入法开启时 `exp/textinput` 的行为；会话里本地输入法关闭后按键是否仍原样转发；VK 是否切换远端输入法 | 待验证（`windows-latest` 软件渲染上已全部跑过，见 `ui-baseline.md`；这一项补真实硬件和输入法） |
+| H30 | 动态帧率 | 在被控端用任务管理器（详细信息 → `go-nx.exe` 的 CPU）看三种情形：①控制端连着，被控端桌面完全不动（无闪烁光标）至少 10 s；②控制端在远程桌面里持续移动鼠标 / 打字；③停止操作后再等 5 s。`go-nx.log` 启动行 `frame rate watching 10/s, working 30/s, idle 2/s` 确认策略。可用 `-fps-active 0 -fps-idle 0`（固定 10 fps）作对照 | ①的 CPU 明显低于对照（约五分之一的抓屏 + 比较开销）；②的画面更流畅；③回落；控制端的第一次操作没有明显的"卡一下"；被控端上若有闪烁光标的窗口，①可能降不下来（已知） | 待验证（核心行为有单元测试和变异检查；真实 GDI 抓屏的成本只有 Windows 机器能测） |
 
 ## 4. 已知缺陷与风险
 

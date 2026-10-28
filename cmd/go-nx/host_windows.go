@@ -163,7 +163,7 @@ func (h *hostState) tooltip() string {
 //
 // listen restricts it to one local IP (see remote.ParseListen); empty means every
 // interface on port. The addresses the home tab shows are the ones that can reach it.
-func startHost(listen string, port, fps int, display string, layered bool, id tls.Certificate, trusted, settings *trust.Store) *hostState {
+func startHost(listen string, port int, rates remote.Rates, display string, layered bool, id tls.Certificate, trusted, settings *trust.Store) *hostState {
 	h := &hostState{
 		policy: trust.NewPolicy(trusted), settings: settings,
 		ID: trust.Fingerprint(id.Certificate[0])[:16],
@@ -205,7 +205,9 @@ func startHost(listen string, port, fps int, display string, layered bool, id tl
 	log.Printf("hosting %dx%d on UDP %s", w, ht, bind)
 	inj := inject.New(w, ht)
 	retargetInjector(inj, scr.Display())
-	go acceptLoop(h, ln, scr, inj, fps)
+	rates = rates.Normalized()
+	log.Printf("startup: frame rate %s", rates)
+	go acceptLoop(h, ln, scr, inj, rates)
 	return h
 }
 
@@ -220,13 +222,14 @@ func retargetInjector(inj *inject.Injector, d capture.Display) {
 	inj.SetDisplay(int(d.W), int(d.H), int(d.X), int(d.Y), vx, vy, vw, vh)
 }
 
-func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *inject.Injector, fps int) {
+func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *inject.Injector, rates remote.Rates) {
 	var (
 		mu              sync.Mutex
 		active          *quic.Conn
 		dd              = proto.NewDedup()
 		inputController = remote.NewInputController(inj)
 		gate            = remote.NewGate(16, 4) // connections waiting to be authenticated: in all, and per address
+		boost           = rates.Boost()
 	)
 	h.mu.Lock()
 	h.kick = func(code quic.ApplicationErrorCode, reason string) {
@@ -249,7 +252,10 @@ func acceptLoop(h *hostState, ln *quic.Listener, scr *capture.Screen, inj *injec
 		log.Printf("handshake complete with %s", conn.RemoteAddr())
 		go func() {
 			err := remote.Serve(context.Background(), conn, scr, inj, dd, remote.Options{
-				FPS:             fps,
+				FPS:             rates.Base,
+				FPSFn:           boost.Rate,
+				OnInput:         boost.Touch,
+				IdleFPS:         rates.Idle,
 				Check:           h.check,
 				InputController: inputController,
 				Gate:            gate,

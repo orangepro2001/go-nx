@@ -49,6 +49,7 @@ type options struct {
 	display      string
 	layered      bool
 	fps, boost   int
+	idle         int
 	stateDir     string
 	pair, noAuth bool
 	allowWinL    bool
@@ -68,8 +69,9 @@ func realMain(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	fs.StringVar(&o.listen, "listen", "127.0.0.1:7000", "UDP address to listen on; use 0.0.0.0:7000 to be reachable from the network")
 	fs.StringVar(&o.display, "display", "primary", `monitor to share: "primary", an index, or a device name such as \\.\DISPLAY2`)
 	fs.BoolVar(&o.layered, "layered", true, "include layered windows (tooltips, menus) in the capture")
-	fs.IntVar(&o.fps, "fps", 10, "capture rate while the viewer is idle")
+	fs.IntVar(&o.fps, "fps", 10, "capture rate while the viewer is watching")
 	fs.IntVar(&o.boost, "boost", 30, "capture rate while the viewer is working; 0 for none")
+	fs.IntVar(&o.idle, "idle", 2, "capture rate once the screen has not changed and the viewer has done nothing for 3 s; 0 for none")
 	fs.StringVar(&o.stateDir, "state-dir", "", "where the identity and the paired devices are kept (default: a per-user directory; in test mode a throwaway one)")
 	fs.BoolVar(&o.pair, "pair", false, "open pairing at startup")
 	fs.BoolVar(&o.noAuth, "no-auth", false, "open mode: let anyone in without verification (for development)")
@@ -153,7 +155,7 @@ func realMain(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	defer cleanup()
 
 	h, err := hostd.New(hostd.Config{
-		Listen: o.listen, StateDir: dir, FPS: o.fps, Boost: o.boost, NoAuth: o.noAuth, AllowWinL: o.allowWinL,
+		Listen: o.listen, StateDir: dir, FPS: o.fps, Boost: o.boost, Idle: o.idle, NoAuth: o.noAuth, AllowWinL: o.allowWinL,
 		Version: version, Backend: backend, Log: logger,
 	}, em)
 	if err != nil {

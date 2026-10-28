@@ -3,7 +3,7 @@
 Windows 10/11 之间的轻量局域网远程查看与操作。纯 Go，无 cgo，单个静态 `go-nx.exe`（GUI 子系统）。同一个程序既能共享本机屏幕（被控端），也能连接别人（控制端）。
 
 - 传输：QUIC（`quic-go`）+ TLS 1.3，自签证书，客户端 TOFU 固定主机指纹
-- 画面：GDI `BitBlt` 抓主屏，64×64 tile 差分，无损编码，默认 10 fps（设计目标是静止时码率接近 0，**尚未测量**）
+- 画面：GDI `BitBlt` 抓主屏，64×64 tile 差分，无损编码；**帧率是动态的**：画面在变时 10 fps，控制端操作时（最近一次输入后 2 s 内）升到 30 fps，画面和输入都静止 3 s 后降到 2 fps，任何输入立刻唤醒（静止时码率接近 0）
 - 界面：Ebiten 窗口 + 系统托盘，关闭窗口只是藏进托盘
 - 更新：应用内自更新（经本机 release-publish，签名校验）。入口在窗口主页右上角的按钮和系统托盘菜单；只在你点击后才替换并重启。每次改动的发布流程见 [`docs/release.md`](docs/release.md)
 
@@ -32,12 +32,13 @@ go test -race -cover ./...  # 核心包在 Linux 上即可测试；cmd/go-nx、c
 ## 运行
 
 ```
-go-nx.exe [-connect host:port] [-port 7000] [-listen IP[:port]] [-fps 10] [-hidden] [-no-update]
+go-nx.exe [-connect host:port] [-port 7000] [-listen IP[:port]] [-fps 10] [-fps-active 30] [-fps-idle 2] [-hidden] [-no-update]
 ```
 
 - 被控端：启动即在监听。点 "Pair new device (2 min)" 开 2 分钟配对窗口，页面会显示一次性 6 位码；新设备连接时把它填在 Password 里，成功后窗口即关闭，之后该设备不用密码。"Forget paired devices" 清空配对（点两次确认）。
 - 控制端：主页填 `IP:端口` 后点 "Connect"（回车切换字段，最后一个字段回车即连接）；`F3` 看日志；`Ctrl+Alt` 组合键用于标签页操作，细节见界面提示。
 - `-listen 192.168.1.5` 只在这块网卡上监听（默认所有接口）；只接受 IP，不接受主机名。
+- 帧率：`-fps` 是画面在变化时的帧率，`-fps-active` 是控制端操作时的帧率（`0` 关闭升帧），`-fps-idle` 是画面和输入都静止 3 s 后的帧率（`0` 关闭降帧）。`-fps-active 0 -fps-idle 0` 就是固定帧率。
 - 配置、身份、信任列表、日志都在 `%AppData%\go-nx\`（日志 `go-nx.log`）。单实例（命名互斥量 `Local\go-nx-single-instance`）。
 
 ## 代码结构

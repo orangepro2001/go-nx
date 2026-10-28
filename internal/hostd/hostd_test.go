@@ -128,13 +128,22 @@ type rigOpt func(*Config)
 func withNoAuth(c *Config)     { c.NoAuth = true }
 func withFPS(fps int) rigOpt   { return func(c *Config) { c.FPS = fps } }
 func withBoost(fps int) rigOpt { return func(c *Config) { c.Boost = fps } }
-func inDir(dir string) rigOpt  { return func(c *Config) { c.StateDir = dir } }
+func withIdle(fps int, after time.Duration) rigOpt {
+	return func(c *Config) { c.Idle, c.IdleAfter = fps, after }
+}
+func inDir(dir string) rigOpt { return func(c *Config) { c.StateDir = dir } }
 
 // startHost runs a host on loopback with a synthetic screen and a log-only injector,
 // controlled through a pipe.
 func startHost(t *testing.T, opts ...rigOpt) *rig {
 	t.Helper()
-	be, sink, err := PatternBackend(synth.SceneBlocks, 640, 480, nil)
+	return startHostShowing(t, synth.SceneBlocks, opts...)
+}
+
+// startHostShowing is startHost with a chosen picture; the default one never holds still.
+func startHostShowing(t *testing.T, scene synth.Scene, opts ...rigOpt) *rig {
+	t.Helper()
+	be, sink, err := PatternBackend(scene, 640, 480, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -567,6 +576,24 @@ func TestTheCaptureRateRisesWhileTheViewerWorks(t *testing.T) {
 	}
 	if _, inputs := r.h.Counts(); inputs == 0 {
 		t.Error("no input was counted")
+	}
+}
+
+// A viewer that only watches a still screen costs the host little, and the first thing
+// it does brings the full rate back.
+func TestTheCaptureRateFallsWhileNothingHappensAndReturnsWithInput(t *testing.T) {
+	r := startHostShowing(t, synth.SceneStatic, withFPS(30), withBoost(0), withIdle(2, 300*time.Millisecond))
+	_, c := liveViewer(t, r, identityIn(t), r.pair())
+	r.em.wait(t, "connected", named("connected"))
+	time.Sleep(1200 * time.Millisecond) // past the first pictures and IdleAfter, with the new rate in force
+	idle := grabsOver(r, 1000*time.Millisecond)
+	if idle < 1 || idle > 4 {
+		t.Errorf("%d looks at the screen in a second of idleness at 2 per second", idle)
+	}
+	c.SendInput(moveTo(10, 10))
+	time.Sleep(100 * time.Millisecond)
+	if busy := grabsOver(r, 200*time.Millisecond); busy < 3 {
+		t.Errorf("%d looks in 0.2 s right after the viewer's input; the rate should be back at 30 per second", busy)
 	}
 }
 

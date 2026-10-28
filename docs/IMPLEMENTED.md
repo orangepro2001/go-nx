@@ -15,7 +15,7 @@
 | DPI | 已实现（2026-10-28；此前是 system-aware 的副作用） | 进程在 `main` 最开头设为 **per-monitor v2**（`capture.EnableDPIAwareness`，退路 `SetProcessDPIAware`），采集尺寸和注入坐标都按物理像素。这也让 Ebiten 回到它自己的默认行为（以前是被 `NewScreen` 抢先设成 system-aware）。混合 DPI 多屏 / 125%–200% 缩放**未在实机上验证**（ACCEPTANCE H7、H8） | `internal/capture`、`cmd/go-nx/main_windows.go` |
 | 鼠标指针 | 已实现，按需（2026-10-28；此前未实现） | `BitBlt` 不含指针，所以 `Screen.SetCursorVisible(true)` 时用 `GetCursorInfo` + `GetIconInfo` + `DrawIconEx` 把它画进抓到的画面（热点和显示器原点已计入，`internal/cursor` 有几何测试）。**默认关**：只对在 v1 Hello 里带 `CapCursor` 的查看器打开（`DialOptions.WantCursor`，给没有自己指针的手机端用），因为自带指针的桌面查看器会看到两个。主机在 Welcome 里声明 `CapCursor`。测试里用注入的固定箭头（`pointerSource`）验证绘制位置与热点——CI runner 没有鼠标，系统不显示真实指针；真实指针的查询由 `TestTheSystemPointerQuery` 在有鼠标的机器上验证（H22） | `internal/capture`、`internal/remote/host.go`、`internal/cursor` |
 | 采集失败恢复 | 已实现（2026-10-28；此前 `Grab` 出错就结束会话） | 能刷新的源（`Refresher`）抓屏失败时会话保留，主机每个 tick 重试 `Refresh` 并上报一次 `capture paused`；恢复后上报 `capture resumed`，查看器期间保留最后一帧；超过 `GrabRetryFor`（默认 60 s）仍不恢复才结束会话。不能刷新的源仍是失败即结束。锁屏 / UAC 的真实行为**未在实机上验证**（ACCEPTANCE H9） | `internal/remote/host.go`、`internal/capture` |
-| 帧率 | 部分 | 固定帧率，默认 10（`-fps`）；Ack 驱动的停等流控 + 过期帧取消，不做质量自适应 | `cmd/go-nx/main_windows.go:99`、`host.go:148` |
+| 帧率 | 已实现（2026-10-28；此前固定 10） | **动态帧率**：画面在变时 `-fps`（默认 10）；控制端操作时升到 `-fps-active`（默认 30，最近一次输入后 2 s 内，`remote.Boost`）；画面没有变化且控制端 3 s 没有输入后降到 `-fps-idle`（默认 2，`Options.IdleFPS`）。输入通过 `Serve` 内部的唤醒通道立刻结束静止，不等慢速 tick；静止时发现画面变化后立刻升回。仍是 Ack 驱动的停等流控 + 过期帧取消，不做质量自适应。一个一直闪烁的光标会让画面不断"在变"（每次只有一两个 tile），此时不降帧，和以前一样。真实 GDI 抓屏下省多少 CPU **未在实机上测**（H30） | `internal/remote/{host,boost,rates}.go`、`cmd/go-nx/{main,host}_windows.go`、`internal/hostd` |
 
 ## 2. tile 与编码
 

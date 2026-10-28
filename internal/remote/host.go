@@ -80,7 +80,16 @@ type Options struct {
 	// can follow what the viewer is doing (see Boost). A value of zero or less keeps
 	// the current rate; one above MaxFPS is lowered to it. A change is noticed at
 	// the next tick, so from a slow rate it can take up to one slow interval.
-	FPSFn      func() int
+	FPSFn func() int
+	// IdleFPS, if above zero and below the rate otherwise in force, is the capture
+	// rate while the session is idle: no change to the picture has been sent and the
+	// viewer has sent no input for IdleAfter. Looking at an unchanged screen is not
+	// free (a full comparison of every tile, as well as the grab), so a viewer that is
+	// only watching a still desktop costs the host little. The first input ends the
+	// idleness at once; a change on the screen is noticed at the next idle tick.
+	IdleFPS int
+	// IdleAfter is how long nothing must happen before IdleFPS applies; default 3 s.
+	IdleAfter  time.Duration
 	AckTimeout time.Duration // base time to wait for a frame's ack; default 1s (see frameTimeout)
 	// Check decides whether the viewer (certificate fingerprint, address, offered
 	// password) may connect.
@@ -138,6 +147,20 @@ type PeerInfo struct {
 // A fixed timeout would cancel and resend a large frame forever on a slow link.
 const minRate = 250_000 // bytes per second (2 Mbit/s)
 
+// defaultIdleAfter is how long a session must see no change and no input before
+// Options.IdleFPS applies.
+const defaultIdleAfter = 3 * time.Second
+
+// captureRate is the rate to capture at: want, unless a slower idle rate is set and
+// the session has been idle for at least idleAfter. An idle rate that is not slower
+// than want is ignored.
+func captureRate(want, idleFPS int, idleFor, idleAfter time.Duration) int {
+	if idleFPS > 0 && idleFPS < want && idleFor >= idleAfter {
+		return idleFPS
+	}
+	return want
+}
+
 func frameTimeout(base time.Duration, size int) time.Duration {
 	return base + time.Duration(size)*time.Second/minRate
 }
@@ -170,6 +193,9 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 	opt.FPS = min(opt.FPS, MaxFPS)
 	if opt.AckTimeout <= 0 {
 		opt.AckTimeout = time.Second
+	}
+	if opt.IdleAfter <= 0 {
+		opt.IdleAfter = defaultIdleAfter
 	}
 	if opt.RefreshEvery <= 0 {
 		opt.RefreshEvery = time.Second
@@ -286,9 +312,24 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 		return err
 	}
 
+	// Input from the viewer is activity: it ends idleness and, when it asks for a
+	// faster rate than the one in force, wakes the capture loop at once instead of
+	// leaving it to find out at its next (possibly slow) tick.
 	var lastAck atomic.Uint32
+	var lastInput atomic.Int64 // unix nanoseconds of the viewer's last input; 0 for none
+	kick := make(chan struct{}, 1)
+	onInput := func() {
+		lastInput.Store(time.Now().UnixNano())
+		if opt.OnInput != nil {
+			opt.OnInput()
+		}
+		select {
+		case kick <- struct{}{}:
+		default:
+		}
+	}
 	readErr := make(chan error, 1)
-	go func() { readErr <- readControl(ctrl, cd, input, dd, &lastAck, opt.OnInput) }()
+	go func() { readErr <- readControl(ctrl, cd, input, dd, &lastAck, onInput) }()
 
 	cur := tile.NewFrame(w, h)
 	var diff tile.Differ
@@ -320,7 +361,21 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 	}
 
 	var lastRefresh, grabFailedSince time.Time
-	fps := opt.FPS
+	lastChange := time.Now() // a session that has just begun is not idle
+	want := opt.FPS          // the rate the caller asks for, before any slowing down for idleness
+	rate := func() int {
+		if opt.FPSFn != nil {
+			if n := min(opt.FPSFn(), MaxFPS); n > 0 {
+				want = n
+			}
+		}
+		last := lastChange
+		if in := time.Unix(0, lastInput.Load()); in.After(last) {
+			last = in
+		}
+		return captureRate(want, opt.IdleFPS, time.Since(last), opt.IdleAfter)
+	}
+	fps := rate()
 	tick := time.NewTicker(time.Second / time.Duration(fps))
 	defer tick.Stop()
 	for {
@@ -335,12 +390,17 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-tick.C:
-		}
-		if opt.FPSFn != nil {
-			if next := min(opt.FPSFn(), MaxFPS); next > 0 && next != fps {
+			if next := rate(); next != fps {
 				fps = next
 				tick.Reset(time.Second / time.Duration(fps))
 			}
+		case <-kick:
+			next := rate()
+			if next <= fps {
+				continue // already fast enough: the ticker will come by on time
+			}
+			fps = next
+			tick.Reset(time.Second / time.Duration(fps))
 		}
 		if inputSession != nil {
 			if released, err := inputSession.ReleaseIfIdle(opt.HeldInputIdle); released && opt.OnError != nil {
@@ -426,6 +486,12 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 			continue
 		}
 		st.Close()
+		lastChange = time.Now()
+		if next := rate(); next > fps {
+			// A change found at an idle look ends the idleness now, not at the next idle tick.
+			fps = next
+			tick.Reset(time.Second / time.Duration(fps))
+		}
 		if opt.OnFrame != nil {
 			opt.OnFrame(seq, len(data))
 		}

@@ -7,7 +7,7 @@
 ## 启动
 
 ```
-nx-host -listen 127.0.0.1:7000 -state-dir <目录> [-pair] [-no-auth] [-fps 10] [-boost 30] [-display primary] ...
+nx-host -listen 127.0.0.1:7000 -state-dir <目录> [-pair] [-no-auth] [-fps 10] [-boost 30] [-idle 2] [-display primary] ...
 nx-host -test-mode -listen 127.0.0.1:0 -size 640x480        # 合成画面 + 只记录输入，任何机器上都安全
 ```
 
@@ -17,7 +17,7 @@ nx-host -test-mode -listen 127.0.0.1:0 -size 640x480        # 合成画面 + 只
 | `-state-dir` | 每用户目录（Windows：`%LOCALAPPDATA%\go-nx\nx-host`）；`-test-mode` 下是用完即删的临时目录 | 身份（`identity.pem`）和已配对设备（`trusted.json`）。**身份变了，所有查看器的固定都会失效** |
 | `-display` | `primary` | 共享哪块显示器：`primary`、序号或 `\\.\DISPLAY2` |
 | `-layered` | `true` | 抓屏是否包含分层窗口（提示、菜单） |
-| `-fps` / `-boost` | `10` / `30` | 空闲时的抓屏帧率 / 查看器在操作时的帧率（最近一次输入后 2 s 内）。`-boost 0` 关闭 |
+| `-fps` / `-boost` / `-idle` | `10` / `30` / `2` | 动态帧率：画面在变化时的抓屏帧率 / 查看器在操作时的帧率（最近一次输入后 2 s 内）/ 画面没有变化且查看器 3 s 没有输入后的帧率。输入立刻唤醒（不用等下一次慢速 tick）。`-boost 0`、`-idle 0` 各自关闭；`-boost`、`-idle` 不比 `-fps` 快 / 慢则无效 |
 | `-pair` | 关 | 启动后立刻开一个配对窗口（等同于发 `pair`） |
 | `-no-auth` | 关 | 开放模式：任何能连上的人都放行。**只用于开发**；会发 `warning` 事件 |
 | `-allow-win-l` | 关 | 允许查看器按 Win+L（会锁定主机，而查看器无法解锁） |
@@ -105,4 +105,5 @@ go-nx 是上游；以下是将来 NightDesk 改用这个 nx-host 时要知道的
 - 过长的命令行被跳过并报错（原来 bufio.Scanner 遇到会停止读取，主机随后把控制端当作消失而退出）。
 - 控制端不读事件时主机退出码 3（原来会在写 stdout 处永远卡住）。
 - 默认 `-boost 30` 复现 NightDesk 固定的 30 fps 交互帧率，现在由 `remote.Boost` 实现。
+- 新增 `-idle 2`（默认开）：静止的画面不再以 10 fps 比较和抓取，而是 2 fps；控制端的第一次输入或画面的第一次变化立刻结束静止（变化要等下一次静止抓取才被发现，最多 0.5 s）。依赖固定帧率的控制端用 `-idle 0`。字段是新增的，`schema` 不变。
 - 真实抓屏沿用 go-nx 的 `capture.Open`：每秒检查显示器变化并跟随分辨率变化，不再用"拓扑变了就失败"的包装。
