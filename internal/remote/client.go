@@ -162,6 +162,19 @@ func ComputerName() string {
 
 func (c *Client) setHost(h HostInfo) { c.hostOnce.Do(func() { c.host = h; close(c.welcome) }) }
 
+// Stats is what the connection can say about itself, for a display of its health.
+type Stats struct {
+	RTT           time.Duration // smoothed round-trip time
+	BytesReceived uint64        // from the host since the connection began, including repeats
+	BytesSent     uint64
+}
+
+// Stats reads the connection's statistics.
+func (c *Client) Stats() Stats {
+	s := c.conn.ConnectionStats()
+	return Stats{RTT: s.SmoothedRTT, BytesReceived: s.BytesReceived, BytesSent: s.BytesSent}
+}
+
 // Version is the control-protocol version in use: 1 or 0.
 func (c *Client) Version() int { return c.cd.version() }
 

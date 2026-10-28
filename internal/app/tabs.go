@@ -2,10 +2,16 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"github.com/quic-go/quic-go"
+
+	"github.com/orangepro2001/go-nx/internal/ui/i18n"
 )
 
 type tabState int
@@ -14,6 +20,9 @@ const (
 	tabConnecting tabState = iota
 	tabLive
 	tabError
+	// tabReconnecting is a session that was live and lost its connection to a network
+	// problem: its last picture stays, dimmed, while the connection is brought back.
+	tabReconnecting
 )
 
 // tab is one connection to another PC. It is created as soon as a connection is started,
@@ -35,6 +44,18 @@ type tab struct {
 	cancel     chan struct{}     // closed when the tab is closed while connecting
 
 	lastClick time.Time // for the double click that renames
+
+	// The session view.
+	barShown bool
+	barUntil time.Time
+	textOpen bool   // the box for sending text is open
+	text     string // what is in it
+	stats    bool   // the statistics are showing
+
+	// A connection being brought back.
+	old      *session // the session that was lost, kept for its last picture
+	attempts atomic.Int32
+	stopRe   chan struct{}
 }
 
 // hostConfirm is a first-time host waiting for the person to compare its fingerprint with
@@ -223,13 +244,135 @@ func (a *App) pollTabs() {
 				err := t.sess.err
 				t.sess.mu.Unlock()
 				t.sess.setVisible(false)
+				liveSessions.Delete(t.sess)
 				log.Printf("session %s ended: %v", t.addr, err)
 				reason, _ := describe(a.tr, err)
-				t.state, t.err, t.sess = tabError, a.tr.T(keyErrDisconnected, "reason", reason), nil
+				t.err = a.tr.T(keyErrDisconnected, "reason", reason)
+				if a.autoReconnect() && reconnectable(err) && t.sess.hasPicture() {
+					a.startReconnect(t)
+				} else {
+					t.state, t.sess = tabError, nil
+				}
+			default:
+			}
+		case tabReconnecting:
+			select {
+			case r := <-t.dial:
+				switch {
+				case r.err == nil:
+					ns := newSession(r.conn, &a.nextOp, a.Invalidate)
+					ns.mode, ns.sized = t.old.mode, true // the window keeps its size, the picture its mode
+					t.sess, t.old, t.state = ns, nil, tabLive
+					ns.setVisible(a.active == i+1)
+					log.Printf("session %s is back", t.addr)
+				case errors.Is(r.err, errStopped):
+					t.state, t.sess, t.old = tabError, nil, nil
+				case errors.Is(r.err, errGaveUp):
+					t.err = a.tr.T(i18n.KeyReconnectGaveUp, "n", maxReconnects) + " " + t.err
+					t.state, t.sess, t.old = tabError, nil, nil
+				default:
+					reason, changed := describe(a.tr, r.err)
+					t.err, t.hostChanged = reason, changed
+					t.state, t.sess, t.old = tabError, nil, nil
+				}
 			default:
 			}
 		}
 	}
+}
+
+// errStopped and errGaveUp are why a reconnection ended without a connection.
+var (
+	errStopped = errors.New("reconnecting was stopped")
+	errGaveUp  = errors.New("could not reconnect")
+)
+
+// maxReconnects is how many times a lost connection is tried again before giving up; with
+// the waits below that is about a minute and a half.
+const maxReconnects = 15
+
+var defaultReconnectWaits = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
+
+// reconnectable reports whether a session ended in a way that is worth trying again: the
+// network let go of it (no word from the host for too long, a reset), or the host closed it
+// normally (it was restarted, say). A refusal, a removed device, a changed identity or a
+// host that ended the session on purpose are not: trying again cannot help or is unwelcome.
+func reconnectable(err error) bool {
+	var idle *quic.IdleTimeoutError
+	var reset *quic.StatelessResetError
+	var ae *quic.ApplicationError
+	var op *net.OpError
+	switch {
+	case errors.As(err, &ae): // the host said something: only an ordinary close is worth another go
+		return ae.ErrorCode == 0
+	case errors.As(err, &idle), errors.As(err, &reset), errors.As(err, &op):
+		return true
+	}
+	return false
+}
+
+// fatalDial reports whether a failed attempt to bring a connection back says it is no use
+// trying: the host answered, and refused.
+func fatalDial(err error) bool {
+	var ae *quic.ApplicationError
+	if errors.As(err, &ae) {
+		return ae.ErrorCode != 0
+	}
+	return isHostChanged(err)
+}
+
+// startReconnect keeps the picture of a lost session, dimmed, and tries to bring the
+// connection back in the background.
+func (a *App) startReconnect(t *tab) {
+	t.old, t.sess, t.state = t.sess, nil, tabReconnecting
+	t.attempts.Store(0)
+	t.stopRe = make(chan struct{})
+	t.dial = make(chan connResult, 1)
+	go a.reconnectLoop(t.addr, t.password, a.reconnectWaits, t.dial, t.stopRe, &t.attempts)
+	a.Invalidate()
+}
+
+func (a *App) reconnectLoop(addr, password string, waits []time.Duration, out chan<- connResult, stop <-chan struct{}, attempts *atomic.Int32) {
+	defer a.Invalidate()
+	for n := 1; n <= maxReconnects; n++ {
+		wait := waits[min(n-1, len(waits)-1)]
+		select {
+		case <-stop:
+			out <- connResult{nil, errStopped}
+			return
+		case <-time.After(wait):
+		}
+		attempts.Store(int32(n))
+		a.Invalidate()
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		c, err := a.cfg.Connector.Dial(ctx, addr, password)
+		cancel()
+		log.Printf("reconnect %s attempt %d/%d: %v", addr, n, maxReconnects, err)
+		if err == nil {
+			select {
+			case <-stop:
+				c.Close()
+				out <- connResult{nil, errStopped}
+			default:
+				out <- connResult{c, nil}
+			}
+			return
+		}
+		if fatalDial(err) {
+			out <- connResult{nil, err}
+			return
+		}
+	}
+	out <- connResult{nil, errGaveUp}
+}
+
+// stopReconnect gives up bringing a connection back.
+func (a *App) stopReconnect(t *tab) {
+	if t.stopRe != nil {
+		close(t.stopRe)
+		t.stopRe = nil
+	}
+	a.ui.Invalidate()
 }
 
 // setActive shows tab i (0 is the pages). Leaving a session releases its held input.
@@ -261,6 +404,13 @@ func (a *App) closeTab(i int) {
 	case t.state == tabConnecting:
 		close(t.cancel)                 // releases a dial that is waiting on the fingerprint prompt
 		go func(ch <-chan connResult) { // a late connection must not leak
+			if r := <-ch; r.conn != nil {
+				r.conn.Close()
+			}
+		}(t.dial)
+	case t.state == tabReconnecting:
+		a.stopReconnect(t)
+		go func(ch <-chan connResult) {
 			if r := <-ch; r.conn != nil {
 				r.conn.Close()
 			}

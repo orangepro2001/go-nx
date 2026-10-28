@@ -99,8 +99,11 @@ type App struct {
 	wantFocus          kit.ID // who gets the keyboard when nothing has it (set while building)
 	idCopied           time.Time
 
-	quitting     bool
-	startFocused bool
+	quitting       bool
+	reconnectWaits []time.Duration // the pauses before attempts to bring a connection back
+	modSig         [4]bool         // which modifiers were shown as held on the remote PC
+	fullscreen     bool            // the window is full screen: the picture has all of it
+	startFocused   bool
 
 	wakeAt   time.Time // the earliest time something other than input needs a frame
 	treeVer  uint64    // counts the trees built, so a painter knows when to paint again
@@ -113,7 +116,7 @@ func New(cfg Config, fonts Fonts) *App {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	a := &App{cfg: cfg, fonts: fonts, scale: 1, devSort: SortRecent}
+	a := &App{cfg: cfg, fonts: fonts, scale: 1, devSort: SortRecent, reconnectWaits: defaultReconnectWaits}
 	var base [8]byte
 	for i := range base {
 		base[i] = byte(rand.Uint32())

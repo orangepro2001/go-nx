@@ -374,3 +374,38 @@ func TestShapesLandInTheRightPlaceOnEveryImage(t *testing.T) {
 		})
 	}
 }
+
+// A shape inside a clip is exactly where it would be without the clip, however far the clip
+// is from the image's origin: on DirectX a shader's idea of "where the image starts" changed
+// with a sub-image, and every clipped control of the interface was drawn shifted by its
+// clip's corner (found on the Windows runner; the test above, whose shape was bigger than
+// its clip, could not see it).
+func TestAClippedShapeIsNotShifted(t *testing.T) {
+	eng := newEngine(t, i18n.English)
+	gpu(t, func(*ebiten.Image) {
+		for _, clip := range []kit.Rect{{X: 0, Y: 0, W: 200, H: 100}, {X: 60, Y: 20, W: 100, H: 60}, {X: 90, Y: 0, W: 60, H: 100}} {
+			c, img := canvasFor(t, eng, 200, 100, 1)
+			c.PushClip(clip)
+			// A 20 x 20 square with sharp corners, at (100, 40): inside every clip above.
+			c.RoundRect(kit.Rect{X: 100, Y: 40, W: 20, H: 20}, 0, red)
+			c.PopClip()
+			for _, p := range []struct {
+				x, y int
+				in   bool
+			}{{100, 40, true}, {119, 59, true}, {110, 50, true}, {99, 50, false}, {120, 50, false}, {110, 39, false}, {110, 60, false}} {
+				if got := pixel(img, p.x, p.y).A == 255; got != p.in {
+					t.Errorf("clip %+v: pixel (%d,%d) covered = %v, want %v: the shape moved", clip, p.x, p.y, got, p.in)
+				}
+			}
+			// And the outline and the shadow, which the same shader draws.
+			c.Begin(img, 1)
+			img.Clear()
+			c.PushClip(clip)
+			c.StrokeRoundRect(kit.Rect{X: 100, Y: 40, W: 20, H: 20}, 0, 2, red)
+			c.PopClip()
+			if pixel(img, 110, 50).A != 0 || pixel(img, 101, 50).A != 255 || pixel(img, 98, 50).A != 0 {
+				t.Errorf("clip %+v: the outline of a clipped shape is shifted", clip)
+			}
+		}
+	})
+}

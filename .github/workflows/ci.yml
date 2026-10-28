@@ -187,7 +187,6 @@ jobs:
       # must reach its first frame, start hosting and not panic. (Nobody clicks anything; what
       # the interface does when it is used is covered by the tests of package app.)
       - name: go-nx.exe starts (Windows smoke test)
-        continue-on-error: true
         run: |
           export APPDATA="$RUNNER_TEMP/smoke-appdata"
           mkdir -p "$APPDATA"

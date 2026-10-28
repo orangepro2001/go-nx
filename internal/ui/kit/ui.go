@@ -185,6 +185,9 @@ func (u *UI) State(id ID) *WState {
 // Now is the time of the frame being handled or painted.
 func (u *UI) Now() time.Time { return u.now }
 
+// Hot is the ID of the node under the pointer, "" for none.
+func (u *UI) Hot() ID { return u.hot }
+
 func (u *UI) IsHot(id ID) bool    { return u.hot == id && id != "" }
 func (u *UI) IsActive(id ID) bool { return u.active == id && id != "" }
 func (u *UI) IsFocus(id ID) bool  { return u.focus == id && id != "" && u.winFocused }

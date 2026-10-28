@@ -4,6 +4,7 @@ import (
 	"image"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -49,7 +50,7 @@ type Game struct {
 	lastTime  time.Time
 
 	t0        time.Time
-	sawFrame  bool
+	sawFrame  atomic.Bool
 	sawDraw   bool
 	everReady bool
 
@@ -69,7 +70,22 @@ func NewGame(app *App, eng *text.Engine) (*Game, error) {
 	eng.OnLoad(func() { app.Invalidate() })
 	app.StartPolling(nil)
 	ebiten.SetFPSMode(ebiten.FPSModeVsyncOffMinimum)
+	g.kickFirstFrame()
 	return g, nil
+}
+
+// kickFirstFrame asks for frames until the first one has run. In "minimum" mode a frame
+// happens only when something asks for it, and a request made before the window exists is
+// forgotten (the fonts, opened in the background, ask as soon as they are done, which is
+// before the window is up): on Windows, where nothing else stirs at start-up, the window
+// was never drawn at all. This was found by starting the real program on the CI runner.
+func (g *Game) kickFirstFrame() {
+	go func() {
+		for !g.sawFrame.Load() {
+			ebiten.ScheduleFrame()
+			time.Sleep(25 * time.Millisecond)
+		}
+	}()
 }
 
 // Layout works in device pixels: returning the logical size instead would make Windows
@@ -168,14 +184,13 @@ func (g *Game) gather(now time.Time) kit.Input {
 
 // Update steps the application.
 func (g *Game) Update() error {
+	if !g.sawFrame.Swap(true) {
+		log.Printf("startup +%dms first Update (window system and GPU ready)", time.Since(g.t0).Milliseconds())
+	}
 	if g.BeforeUpdate != nil {
 		g.BeforeUpdate()
 	}
 	a := g.app
-	if !g.sawFrame {
-		g.sawFrame = true
-		log.Printf("startup +%dms first Update (window system and GPU ready)", time.Since(g.t0).Milliseconds())
-	}
 	if ebiten.IsWindowBeingClosed() {
 		a.cfg.Platform.HideWindow() // sessions stay connected in the background
 	}
@@ -184,6 +199,9 @@ func (g *Game) Update() error {
 	in := g.gather(now)
 	a.Step(in)
 	a.StepLive(g.fitWindow)
+	if want := a.Fullscreen(); want != ebiten.IsFullscreen() {
+		ebiten.SetFullscreen(want)
+	}
 	if !g.imeNext.IsZero() {
 		a.WakeIn(g.imeNext.Sub(now))
 		g.imeNext = time.Time{}
@@ -238,7 +256,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		g.layerVer, g.layerScale = a.TreeVersion()+1, g.scale
 		g.animating, g.paintDue = a.ui.WantsFrame()
 	}
-	if a.liveTab() != nil {
+	if pt, _, _ := a.pictureTab(); pt != nil {
 		screen.Fill(kit.Color{A: 255})
 		a.drawLive(screen)
 	}

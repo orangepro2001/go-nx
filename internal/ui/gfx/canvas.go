@@ -113,13 +113,29 @@ func (c *Canvas) FillRect(r kit.Rect, col kit.Color) {
 	c.cur.DrawImage(c.px, op)
 }
 
-// shape draws the shader over the rectangle (x, y, w, h) grown by grow pixels.
+// clipRect is the part of the image that may be drawn on now, in the image's own pixels.
+func (c *Canvas) clipRect() image.Rectangle {
+	if n := len(c.clips); n > 0 {
+		return c.clips[n-1]
+	}
+	return c.root.Bounds()
+}
+
+// shape draws the shader over the rectangle (x, y, w, h) grown by grow pixels, within the
+// clip. It draws on the whole image and keeps to the clip by drawing only the part of the
+// rectangle inside it, never on a sub-image: what a sub-image's origin is to a shader
+// differs between Ebiten's backends (on DirectX it is the sub-image's, on OpenGL the whole
+// image's), which put every clipped shape in the wrong place on Windows. Positions in the
+// shader are those of the whole image, whatever backend.
 func (c *Canvas) shape(x, y, w, h, radius, width, blur, grow float64, col kit.Color) {
 	if w <= 0 || h <= 0 {
 		return
 	}
 	radius = math.Min(radius, math.Min(w, h)/2)
-	gx, gy, gw, gh := x-grow, y-grow, w+2*grow, h+2*grow
+	r := image.Rect(int(math.Floor(x-grow)), int(math.Floor(y-grow)), int(math.Ceil(x+w+grow)), int(math.Ceil(y+h+grow))).Intersect(c.clipRect())
+	if r.Empty() {
+		return
+	}
 	a := float32(col.A) / 255
 	op := &ebiten.DrawRectShaderOptions{
 		Uniforms: map[string]any{
@@ -131,8 +147,8 @@ func (c *Canvas) shape(x, y, w, h, radius, width, blur, grow float64, col kit.Co
 			"Color":  []float32{float32(col.R) / 255 * a, float32(col.G) / 255 * a, float32(col.B) / 255 * a, a},
 		},
 	}
-	op.GeoM.Translate(gx, gy)
-	c.cur.DrawRectShader(int(math.Ceil(gw)), int(math.Ceil(gh)), c.shade, op)
+	op.GeoM.Translate(float64(r.Min.X), float64(r.Min.Y))
+	c.root.DrawRectShader(r.Dx(), r.Dy(), c.shade, op)
 }
 
 func (c *Canvas) RoundRect(r kit.Rect, radius float64, col kit.Color) {

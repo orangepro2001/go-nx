@@ -12,13 +12,12 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
 	"github.com/orangepro2001/go-nx/internal/proto"
+	"github.com/orangepro2001/go-nx/internal/remote"
 	"github.com/orangepro2001/go-nx/internal/tile"
 	"github.com/orangepro2001/go-nx/internal/view"
 )
 
 const (
-	repeatDelay    = 30 // ticks a key is held before auto-repeat starts
-	repeatEvery    = 3
 	receiptWarnAt  = 3 * time.Second
 	keepAliveEvery = 5 * time.Second // a held button with a still pointer says it is alive this often
 )
@@ -27,21 +26,30 @@ const (
 type session struct {
 	cl Conn
 
-	mu      sync.Mutex
-	rgba    []byte // full-frame RGBA, kept only for whole-frame uploads
-	fw, fh  int
-	full    bool                 // upload the whole of rgba next
-	patches []patch              // changed tiles to upload after that, in order
-	pending map[uint64]time.Time // actions awaiting a receipt
-	failed  int
-	err     error // set when the connection ends
-	done    chan struct{}
+	mu        sync.Mutex
+	rgba      []byte // full-frame RGBA, kept only for whole-frame uploads
+	fw, fh    int
+	full      bool                 // upload the whole of rgba next
+	patches   []patch              // changed tiles to upload after that, in order
+	pending   map[uint64]time.Time // actions awaiting a receipt
+	failed    int
+	frames    []time.Time // when the pictures of the last second arrived
+	statAt    time.Time
+	statBytes uint64
+	rate      float64
+	err       error // set when the connection ends
+	done      chan struct{}
 
 	img          *ebiten.Image
 	sized        bool        // window already fitted to the first frame
 	visible      atomic.Bool // this session's tab is the one on screen
 	lastX, lastY int32
 	held         map[uint16]bool
+	nextRepeat   map[uint16]time.Time // when each held key repeats next
+	mode         view.Mode            // how the picture is shown
+	panX, panY   float64              // how far into the picture the window's left and top edges are (actual size)
+	lastPan      time.Time
+	panning      bool
 	down         map[int32]bool // mouse buttons pressed on the remote
 	nextOp       *uint64
 	changed      func()    // something the interface shows has changed: a picture arrived, the session ended
@@ -78,7 +86,7 @@ type patch struct {
 }
 
 func newSession(cl Conn, nextOp *uint64, changed func()) *session {
-	s := &session{cl: cl, pending: map[uint64]time.Time{}, held: map[uint16]bool{}, down: map[int32]bool{}, done: make(chan struct{}), nextOp: nextOp, changed: changed}
+	s := &session{cl: cl, pending: map[uint64]time.Time{}, held: map[uint16]bool{}, nextRepeat: map[uint16]time.Time{}, down: map[int32]bool{}, done: make(chan struct{}), nextOp: nextOp, changed: changed}
 	liveSessions.Store(s, struct{}{})
 	go func() {
 		err := cl.Run(context.Background(), s.onFrame, s.onReceipt)
@@ -99,6 +107,9 @@ func (s *session) onFrame(f *tile.Frame, dirty []tile.Rect) {
 	defer s.notify()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now()
+	s.frames = append(s.frames, now)
+	s.trimFrames(now)
 	if s.fw != f.W || s.fh != f.H || len(dirty)*4 > f.Cols()*f.Rows() || !s.visible.Load() {
 		if s.fw != f.W || s.fh != f.H {
 			s.fw, s.fh = f.W, f.H
@@ -178,6 +189,7 @@ func (s *session) releaseAllLocked() {
 	for _, k := range view.ReleaseOrder(codes) {
 		s.send(proto.Input{Kind: proto.KindKeyUp, Arg: int32(k)})
 		delete(s.held, k)
+		delete(s.nextRepeat, k)
 	}
 }
 
@@ -226,9 +238,26 @@ func (s *session) upload() (fw, fh int) {
 	return s.fw, s.fh
 }
 
-// update uploads new frames and, if input is true, forwards mouse and keyboard
-// input. vp is the area of the window the remote screen is shown in.
-func (s *session) update(vp rect, input bool, window func(fw, fh int)) {
+// gate says which of the person's input belongs to the remote PC right now. The pointer
+// does not while it is over the interface (the toolbar), the keyboard does not while the
+// interface has it (the box for sending text).
+type gate struct{ keys, pointer bool }
+
+const (
+	// Keys held down on the remote repeat after typeDelay and then every typeEvery, the
+	// way a keyboard does, by the clock: frames come when something happens, so counting
+	// them would make a mouse moved with a key held repeat the key much too fast.
+	typeDelay = 500 * time.Millisecond
+	typeEvery = 33 * time.Millisecond
+
+	panMargin = 40.0   // device pixels from the edge in which the picture pans
+	panSpeed  = 1200.0 // device pixels a second at the very edge
+)
+
+// update uploads new frames and forwards what the person does: the pointer, the wheel and
+// the keyboard, as far as g lets them through. vp is the part of the window the picture
+// is in. window is told the size of the first picture, to fit the window to it.
+func (s *session) update(vp rect, g gate, window func(fw, fh int)) {
 	fw, fh := s.upload()
 	if fw == 0 || vp.W == 0 {
 		return
@@ -239,38 +268,69 @@ func (s *session) update(vp rect, input bool, window func(fw, fh int)) {
 	}
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
-	if !input || !ebiten.IsFocused() { // never leave keys stuck down on the host
+	now := time.Now()
+	if !ebiten.IsFocused() { // never leave keys stuck down on the host
 		s.releaseAllLocked()
 		return
 	}
+	if !g.keys {
+		s.releaseKeysLocked()
+	}
 
 	cx, cy := ebiten.CursorPosition()
-	x, y, inside := view.ToHost(cx, cy, vp.X, vp.Y, vp.W, vp.H, fw, fh)
-	// While a button is held the pointer is followed even outside the picture, to
-	// its edge: otherwise a drag that leaves the window ends with the host's
-	// pointer wherever it last was inside, and the release then jumps it.
-	if (inside || len(s.down) > 0) && (x != s.lastX || y != s.lastY) {
-		s.lastX, s.lastY = x, y
-		s.send(proto.Input{Kind: proto.KindMouseMove, X: x, Y: y})
-	}
-	// A button that has been held a while with the pointer still sends nothing; say
-	// we are alive, or the host lets go of it (it cannot tell a still viewer from a
-	// vanished one).
-	if len(s.down) > 0 && time.Since(s.lastSent) > keepAliveEvery {
-		s.send(proto.Input{Kind: proto.KindMouseMove, X: s.lastX, Y: s.lastY})
-	}
-	for _, b := range []struct {
-		btn ebiten.MouseButton
-		id  int32
-	}{{ebiten.MouseButtonLeft, 0}, {ebiten.MouseButtonRight, 1}, {ebiten.MouseButtonMiddle, 2}} {
-		if inside && inpututil.IsMouseButtonJustPressed(b.btn) {
-			s.down[b.id] = true
-			s.action(proto.Input{Kind: proto.KindMouseDown, X: x, Y: y, Arg: b.id})
+	px, py := float64(cx-vp.X), float64(cy-vp.Y)
+	over := cx >= vp.X && cx < vp.X+vp.W && cy >= vp.Y && cy < vp.Y+vp.H
+
+	// A picture shown at its own size and bigger than the window is panned by the pointer
+	// near its edges.
+	s.panning = false
+	if s.mode == view.ModeActual {
+		maxX, maxY := view.MaxPan(vp.W, vp.H, fw, fh)
+		if over && g.pointer && (maxX > 0 || maxY > 0) {
+			dt := min(now.Sub(s.lastPan), 50*time.Millisecond)
+			if !s.lastPan.IsZero() {
+				dx, dy := view.EdgePan(px, py, vp.W, vp.H, panMargin, panSpeed, dt, maxX > 0, maxY > 0)
+				s.panX, s.panY = min(max(s.panX+dx, 0), maxX), min(max(s.panY+dy, 0), maxY)
+				s.panning = dx != 0 || dy != 0
+			}
+			s.lastPan = now
+		} else {
+			s.lastPan = time.Time{}
 		}
-		// A release always goes through, even outside the picture, for a button we pressed.
-		if s.down[b.id] && inpututil.IsMouseButtonJustReleased(b.btn) {
-			delete(s.down, b.id)
-			s.action(proto.Input{Kind: proto.KindMouseUp, X: x, Y: y, Arg: b.id})
+		s.panX, s.panY = min(max(s.panX, 0), maxX), min(max(s.panY, 0), maxY)
+	}
+	pl := view.Place(s.mode, vp.W, vp.H, fw, fh, s.panX, s.panY)
+	hx, hy := pl.ToHostAt(px, py, fw, fh)
+	x, y := hx, hy
+	inside := over && g.pointer
+
+	if g.pointer || len(s.down) > 0 {
+		// While a button is held the pointer is followed even outside the picture, to
+		// its edge: otherwise a drag that leaves the window ends with the host's
+		// pointer wherever it last was inside, and the release then jumps it.
+		if (inside || len(s.down) > 0) && (x != s.lastX || y != s.lastY) {
+			s.lastX, s.lastY = x, y
+			s.send(proto.Input{Kind: proto.KindMouseMove, X: x, Y: y})
+		}
+		// A button that has been held a while with the pointer still sends nothing; say
+		// we are alive, or the host lets go of it (it cannot tell a still viewer from a
+		// vanished one).
+		if len(s.down) > 0 && time.Since(s.lastSent) > keepAliveEvery {
+			s.send(proto.Input{Kind: proto.KindMouseMove, X: s.lastX, Y: s.lastY})
+		}
+		for _, b := range []struct {
+			btn ebiten.MouseButton
+			id  int32
+		}{{ebiten.MouseButtonLeft, 0}, {ebiten.MouseButtonRight, 1}, {ebiten.MouseButtonMiddle, 2}} {
+			if inside && inpututil.IsMouseButtonJustPressed(b.btn) {
+				s.down[b.id] = true
+				s.action(proto.Input{Kind: proto.KindMouseDown, X: x, Y: y, Arg: b.id})
+			}
+			// A release always goes through, even outside the picture, for a button we pressed.
+			if s.down[b.id] && inpututil.IsMouseButtonJustReleased(b.btn) {
+				delete(s.down, b.id)
+				s.action(proto.Input{Kind: proto.KindMouseUp, X: x, Y: y, Arg: b.id})
+			}
 		}
 	}
 	if dx, dy := ebiten.Wheel(); inside {
@@ -281,7 +341,10 @@ func (s *session) update(vp rect, input bool, window func(fw, fh int)) {
 			s.action(proto.Input{Kind: proto.KindWheelH, X: x, Y: y, Arg: int32(dx * 120)})
 		}
 	}
-	// Collect what happened to the keys this tick and send it in keyboard order.
+	if !g.keys {
+		return
+	}
+	// Collect what happened to the keys this frame and send it in keyboard order.
 	var events []view.KeyEvent
 	for _, k := range vkKeys {
 		code := vk[k]
@@ -290,39 +353,66 @@ func (s *session) update(vp rect, input bool, window func(fw, fh int)) {
 			events = append(events, view.KeyEvent{Code: code, Down: true})
 		case inpututil.IsKeyJustReleased(k):
 			events = append(events, view.KeyEvent{Code: code, Down: false})
-		case ebiten.IsKeyPressed(k):
-			if d := inpututil.KeyPressDuration(k); d > repeatDelay && d%repeatEvery == 0 {
-				s.send(proto.Input{Kind: proto.KindKeyDown, Arg: int32(code)}) // auto-repeat
-			}
 		}
 	}
 	view.OrderKeyEvents(events)
 	for _, e := range events {
 		if e.Down {
 			s.held[e.Code] = true
+			s.nextRepeat[e.Code] = now.Add(typeDelay)
 			s.action(proto.Input{Kind: proto.KindKeyDown, Arg: int32(e.Code)})
 		} else {
 			delete(s.held, e.Code)
+			delete(s.nextRepeat, e.Code)
 			s.action(proto.Input{Kind: proto.KindKeyUp, Arg: int32(e.Code)})
 		}
 	}
+	// Auto-repeat of what is still held (not the modifiers: holding Shift is not typing).
+	for code, due := range s.nextRepeat {
+		if view.IsModifier(code) || now.Before(due) {
+			continue
+		}
+		s.send(proto.Input{Kind: proto.KindKeyDown, Arg: int32(code)})
+		s.nextRepeat[code] = now.Add(typeEvery)
+	}
 }
 
-func (s *session) draw(screen *ebiten.Image, vp rect) {
+// releaseKeysLocked lets go of the keys (not the buttons) held on the remote.
+func (s *session) releaseKeysLocked() {
+	codes := make([]uint16, 0, len(s.held))
+	for k := range s.held {
+		codes = append(codes, k)
+	}
+	for _, k := range view.ReleaseOrder(codes) {
+		s.send(proto.Input{Kind: proto.KindKeyUp, Arg: int32(k)})
+		delete(s.held, k)
+		delete(s.nextRepeat, k)
+	}
+}
+
+// draw puts the picture in the viewport. dim darkens it (a connection that is being
+// brought back).
+func (s *session) draw(screen *ebiten.Image, vp rect, dim bool) {
 	if s.img == nil {
 		return
 	}
-	scale, ox, oy := view.Fit(vp.W, vp.H, s.fw, s.fh)
+	pl := view.Place(s.mode, vp.W, vp.H, s.fw, s.fh, s.panX, s.panY)
 	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Scale(scale, scale)
-	op.GeoM.Translate(float64(vp.X)+ox, float64(vp.Y)+oy)
+	op.GeoM.Scale(pl.Scale, pl.Scale)
+	op.GeoM.Translate(float64(vp.X)+pl.OX, float64(vp.Y)+pl.OY)
 	// Shrinking with nearest-neighbour drops pixel rows and columns and breaks
 	// small text, so only enlarge with it.
 	op.Filter = ebiten.FilterLinear
-	if scale >= 1 {
+	if pl.Scale >= 1 {
 		op.Filter = ebiten.FilterNearest
 	}
-	screen.DrawImage(s.img, op)
+	if dim {
+		op.ColorScale.Scale(0.45, 0.45, 0.45, 1)
+	}
+	// The picture is clipped to the viewport, which matters when it is shown at its own
+	// size and is bigger than the window (and not to draw over the tab strip).
+	sub := screen.SubImage(image.Rect(vp.X, vp.Y, vp.X+vp.W, vp.Y+vp.H)).(*ebiten.Image)
+	sub.DrawImage(s.img, op)
 }
 
 // rect is a rectangle in device pixels.
@@ -336,4 +426,128 @@ func (s *session) holding() bool {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
 	return len(s.held) > 0 || len(s.down) > 0
+}
+
+// modifiers reports which of Ctrl, Alt, Shift and the Windows key are held down on the remote.
+func (s *session) modifiers() (ctrl, alt, shift, win bool) {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	for code := range s.held {
+		switch code & 0xFF {
+		case 0x11, 0xA2, 0xA3:
+			ctrl = true
+		case 0x12, 0xA4, 0xA5:
+			alt = true
+		case 0x10, 0xA0, 0xA1:
+			shift = true
+		case 0x5B, 0x5C:
+			win = true
+		}
+	}
+	return
+}
+
+// releaseKeys lets go of every key held on the remote (the toolbar's button for a key that
+// seems stuck), leaving the mouse buttons alone.
+func (s *session) releaseKeys() {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	s.releaseKeysLocked()
+}
+
+// pressKey taps a key on the remote: the Korean mode switch, say, which Ebiten cannot see.
+func (s *session) pressKey(code uint16) {
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	s.action(proto.Input{Kind: proto.KindKeyDown, Arg: int32(code)})
+	s.action(proto.Input{Kind: proto.KindKeyUp, Arg: int32(code)})
+}
+
+// The optional abilities of a connection. *remote.Client has all of them; a connection that
+// lacks one simply does not offer the control that needs it.
+type (
+	textConn interface {
+		Supports(proto.Caps) bool
+		SendText(opID uint64, text string) error
+	}
+	statsConn interface{ Stats() remote.Stats }
+	hostConn  interface {
+		Host() (remote.HostInfo, bool)
+	}
+)
+
+// canText reports whether the host can type text sent to it, which only a host that said so
+// is asked to (an older one ends the session when it meets a message it does not know).
+func (s *session) canText() bool {
+	tc, ok := s.cl.(textConn)
+	return ok && tc.Supports(proto.CapText)
+}
+
+// sendText has the host type text, as Unicode, whatever its keyboard layout or input method.
+func (s *session) sendText(text string) {
+	tc, ok := s.cl.(textConn)
+	if !ok || text == "" {
+		return
+	}
+	*s.nextOp++
+	id := *s.nextOp
+	s.mu.Lock()
+	s.pending[id] = time.Now()
+	s.mu.Unlock()
+	if err := tc.SendText(id, text); err != nil {
+		log.Printf("send text: %v", err)
+	}
+}
+
+// hostName is the name the host gave itself, if it did.
+func (s *session) hostName() string {
+	if hc, ok := s.cl.(hostConn); ok {
+		if h, ok := hc.Host(); ok {
+			return h.Name
+		}
+	}
+	return ""
+}
+
+// fps is how many pictures arrived in the last second.
+func (s *session) fps() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.trimFrames(time.Now())
+	return len(s.frames)
+}
+
+func (s *session) trimFrames(now time.Time) {
+	i := 0
+	for i < len(s.frames) && now.Sub(s.frames[i]) > time.Second {
+		i++
+	}
+	s.frames = s.frames[i:]
+}
+
+// link is the round-trip time and the rate the host's data has been arriving at (bytes a
+// second since the last time it was asked), for the statistics.
+func (s *session) link() (rtt time.Duration, bytesPerSec float64, ok bool) {
+	sc, has := s.cl.(statsConn)
+	if !has {
+		return 0, 0, false
+	}
+	st := sc.Stats()
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.statAt.IsZero() && now.Sub(s.statAt) >= 400*time.Millisecond {
+		s.rate = float64(st.BytesReceived-s.statBytes) / now.Sub(s.statAt).Seconds()
+		s.statAt, s.statBytes = now, st.BytesReceived
+	} else if s.statAt.IsZero() {
+		s.statAt, s.statBytes = now, st.BytesReceived
+	}
+	return st.RTT, s.rate, true
+}
+
+// hasPicture reports whether a picture has arrived from the host.
+func (s *session) hasPicture() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fw > 0
 }

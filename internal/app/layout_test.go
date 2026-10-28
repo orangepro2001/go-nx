@@ -19,13 +19,19 @@ func TestEveryScreenFitsInEveryLanguageAndSize(t *testing.T) {
 	for _, name := range SceneNames() {
 		for _, lang := range []i18n.Lang{i18n.English, i18n.Chinese, i18n.Korean, i18n.Pseudo} {
 			for _, sz := range sizes {
+				// The themes differ in colour, not in where anything goes; the light one is
+				// checked at one size in English, and the contrast of its colours by package theme.
 				for _, dark := range []bool{true, false} {
+					if !dark && !(lang == i18n.English && sz == sizes[0]) {
+						continue
+					}
 					id := fmt.Sprintf("%s/%s/%dx%d/dark=%v", name, lang.Tag(), sz[0], sz[1], dark)
 					t.Run(id, func(t *testing.T) {
 						p, err := NewPreview(FixedText{}, lang, dark, sz[0], sz[1], 1, t.TempDir())
 						if err != nil {
 							t.Fatal(err)
 						}
+						t.Cleanup(p.Close)
 						if err := p.Show(name); err != nil {
 							t.Fatal(err)
 						}

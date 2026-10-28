@@ -5,10 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"time"
+
+	"github.com/hajimehoshi/ebiten/v2"
 
 	"github.com/orangepro2001/go-nx/internal/logging"
 	"github.com/orangepro2001/go-nx/internal/profiles"
+	"github.com/orangepro2001/go-nx/internal/proto"
+	"github.com/orangepro2001/go-nx/internal/remote"
+	"github.com/orangepro2001/go-nx/internal/synth"
+	"github.com/orangepro2001/go-nx/internal/tile"
 	"github.com/orangepro2001/go-nx/internal/ui/i18n"
 	"github.com/orangepro2001/go-nx/internal/ui/kit"
 	"github.com/orangepro2001/go-nx/internal/update"
@@ -18,12 +25,21 @@ import (
 // screenshots (tools/uipreview) and for tests that sweep every screen. Nothing in it
 // connects anywhere or touches the machine.
 type Preview struct {
-	App  *App
-	host *previewHost
-	upd  *previewUpdater
-	logs *logging.Logger
-	prof *profiles.List
-	now  time.Time
+	App   *App
+	host  *previewHost
+	upd   *previewUpdater
+	logs  *logging.Logger
+	prof  *profiles.List
+	now   time.Time
+	conns []*previewConn
+}
+
+// Close ends the connections of the screens that were shown.
+func (p *Preview) Close() {
+	for _, c := range p.conns {
+		c.Close()
+	}
+	p.conns = nil
 }
 
 // SceneNames are the screens a Preview can show.
@@ -214,4 +230,91 @@ func (previewConnector) Pin(string, string) error { return nil }
 func (previewConnector) Forget(string) error      { return nil }
 func (previewConnector) Dial(context.Context, string, string) (Conn, error) {
 	return nil, errors.New("preview")
+}
+
+// previewConn is a connection that shows one picture and does nothing else, with every
+// optional ability, so that the session view can be drawn.
+type previewConn struct {
+	done chan struct{}
+	once sync.Once
+}
+
+func (c *previewConn) Run(ctx context.Context, onFrame func(*tile.Frame, []tile.Rect), _ func(uint64, byte)) error {
+	src, err := synth.NewScene(synth.SceneDocScroll, 1280, 800)
+	if err == nil {
+		f := tile.NewFrame(1280, 800)
+		if src.Grab(f) == nil {
+			onFrame(f, nil)
+		}
+	}
+	select {
+	case <-c.done:
+	case <-ctx.Done():
+	}
+	return errors.New("preview ended")
+}
+func (c *previewConn) SendInput(proto.Input) error   { return nil }
+func (c *previewConn) Close()                        { close(c.done) }
+func (c *previewConn) Supports(caps proto.Caps) bool { return caps.Has(proto.CapText) }
+func (c *previewConn) SendText(uint64, string) error { return nil }
+func (c *previewConn) Stats() remote.Stats {
+	return remote.Stats{RTT: 38 * time.Millisecond, BytesReceived: 3 << 20}
+}
+func (c *previewConn) Host() (remote.HostInfo, bool) {
+	return remote.HostInfo{Name: "WORKSHOP-PC"}, true
+}
+
+// liveTab makes a tab with a picture on it, like a connection that has just got its first
+// picture (the picture arrives on the connection's goroutine; this waits for it).
+func (p *Preview) liveTab(title string) *tab {
+	conn := &previewConn{done: make(chan struct{})}
+	p.conns = append(p.conns, conn)
+	s := newSession(conn, &p.App.nextOp, nil)
+	for i := 0; i < 500 && !s.hasPicture(); i++ {
+		time.Sleep(2 * time.Millisecond)
+	}
+	s.setVisible(true)
+	p.App.serial++
+	t := &tab{serial: p.App.serial, title: title, addr: "192.168.1.31:7000", state: tabLive, sess: s}
+	p.App.tabs = append(p.App.tabs, t)
+	p.App.active = len(p.App.tabs)
+	p.App.fonts.SetScale(p.App.scale)
+	return t
+}
+
+// DrawPicture draws the picture of the tab on show, if there is one, under where the
+// interface will be painted. It needs the GPU.
+func (p *Preview) DrawPicture(dst *ebiten.Image) {
+	p.App.StepLive(func(int, int) {})
+	p.App.drawLive(dst)
+}
+
+func init() {
+	previewScenes = append(previewScenes,
+		previewScene{"session", func(p *Preview) {
+			t := p.liveTab("Press 3")
+			p.App.showBar(t)
+		}},
+		previewScene{"session-handle", func(p *Preview) { p.liveTab("Press 3") }},
+		previewScene{"session-text", func(p *Preview) {
+			t := p.liveTab("Press 3")
+			t.stats = true
+			t.text = "你好 hello 안녕"
+			p.App.openText(t)
+			t.sess.held[0xA2] = true
+			t.sess.held[0xA0] = true
+			p.App.noteModifiers(t.sess)
+		}},
+		previewScene{"session-reconnecting", func(p *Preview) {
+			t := p.liveTab("Press 3")
+			p.App.reconnectWaits = []time.Duration{time.Hour} // never gets as far as dialling
+			p.App.startReconnect(t)
+			t.attempts.Store(3)
+		}},
+		previewScene{"session-fullscreen", func(p *Preview) {
+			t := p.liveTab("Press 3")
+			p.App.showBar(t)
+			p.App.fullscreen = true
+		}},
+	)
 }

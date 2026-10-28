@@ -177,5 +177,26 @@ const (
 	KeyQuitHint
 	KeyQuitAsk
 	KeyAlreadyRunning
+	KeyBarFit
+	KeyBarActual
+	KeyBarFullscreen
+	KeyBarExitFullscreen
+	KeyBarSendText
+	KeyBarReleaseKeys
+	KeyBarStats
+	KeyBarHangul
+	KeyBarHanja
+	KeyBarHostChecked
+	KeyBarShow
+	KeyBarTextPlaceholder
+	KeyBarSend
+	KeyStatsLine
+	KeyStatsPicture
+	KeyReconnectTitle
+	KeyReconnectStop
+	KeyReconnectGaveUp
+	KeySetSession
+	KeySetAutoReconnect
+	KeySetKoreanKeys
 	numKeys
 )

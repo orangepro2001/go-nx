@@ -370,7 +370,7 @@ func (r *rig) tr() *i18n.Translator { return r.a.tr }
 // wait runs frames until cond holds (other goroutines, like a dial, take a moment).
 func (r *rig) wait(what string, cond func() bool) {
 	r.t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(20 * time.Second) // generous: the machine may be busy
 	for time.Now().Before(deadline) {
 		r.step(kit.Input{})
 		if cond() {

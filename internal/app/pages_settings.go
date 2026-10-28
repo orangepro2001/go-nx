@@ -26,7 +26,7 @@ func FixedFrameRates(s Settings) bool {
 func (a *App) pageSettings() kit.Node {
 	tr := a.tr
 	return a.pageFrame("page.settings", tr.T(i18n.KeyNavSettings),
-		a.appearanceCard(), a.languageCard(), a.frameRateCard(), a.updatesCard(), a.diagnosticsCard())
+		a.appearanceCard(), a.languageCard(), a.sessionCard2(), a.frameRateCard(), a.updatesCard(), a.diagnosticsCard())
 }
 
 func (a *App) appearanceCard() kit.Node {
@@ -68,6 +68,30 @@ func (a *App) languageCard() kit.Node {
 			kit.Spacer(),
 		}},
 		a.caption(tr.T(i18n.KeySetLanguageNote)),
+	)
+}
+
+// sessionCard2 is the settings of the session view (sessionCard is the connecting card).
+func (a *App) sessionCard2() kit.Node {
+	tr := a.tr
+	toggle := func(id kit.ID, label, key string, on bool) kit.Node {
+		return &kit.Row{Gap: theme.S3, Align: kit.AlignCenter, Children: []kit.Node{
+			&kit.Toggle{ID: id, On: on, OnChange: func(v bool) {
+				val := "0"
+				if v {
+					val = "1"
+				}
+				if err := a.cfg.Settings.Set(key, val); err != nil {
+					log.Printf("could not save setting: %v", err)
+				}
+				a.ui.Invalidate()
+			}},
+			kit.Grow(1, &kit.Label{Text: label, Wrap: true}),
+		}}
+	}
+	return a.card(tr.T(i18n.KeySetSession), kit.Color{},
+		toggle("set.reconnect", tr.T(i18n.KeySetAutoReconnect), keyAutoReconnect, a.autoReconnect()),
+		toggle("set.korean", tr.T(i18n.KeySetKoreanKeys), keyKoreanKeys, a.koreanKeys()),
 	)
 }
 

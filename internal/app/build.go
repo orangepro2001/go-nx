@@ -12,13 +12,16 @@ import (
 // build makes the tree for the state the application is in.
 func (a *App) build() kit.Node {
 	p := a.ui.Pal
-	live := a.liveTab() != nil
+	pt, _, _ := a.pictureTab()
+	live := pt != nil
 	col := &kit.Col{Align: kit.AlignStretch}
-	if b := a.banner(); b != nil {
-		col.Children = append(col.Children, b)
-	}
-	if len(a.tabs) > 0 {
-		col.Children = append(col.Children, a.tabStrip())
+	if !(live && a.fullscreen) { // a full-screen picture has the whole screen
+		if b := a.banner(); b != nil {
+			col.Children = append(col.Children, b)
+		}
+		if len(a.tabs) > 0 {
+			col.Children = append(col.Children, a.tabStrip())
+		}
 	}
 	col.Children = append(col.Children, kit.Grow(1, a.content()))
 
@@ -122,8 +125,9 @@ func (a *App) content() kit.Node {
 	switch {
 	case t == nil:
 		return &kit.Row{Align: kit.AlignStretch, Children: []kit.Node{a.sidebar(), kit.Grow(1, a.pageContent())}}
-	case t.state == tabLive:
-		return &viewport{a: a}
+	}
+	if pt, ps, dim := a.pictureTab(); pt != nil && ps != nil {
+		return kit.Stack{Children: []kit.Node{&viewport{a: a}, a.sessionOverlay(pt, ps, dim)}}
 	}
 	return a.sessionCard(t)
 }

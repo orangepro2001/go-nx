@@ -127,6 +127,7 @@ func (g *previewGame) Draw(*ebiten.Image) {
 			p.Step()
 		}
 		img.Clear()
+		p.DrawPicture(img) // the remote picture of a session screen, under the interface
 		g.cv.Begin(img, j.scale)
 		p.App.UI().Paint(g.cv)
 	}
