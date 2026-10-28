@@ -11,6 +11,8 @@ go-nx：Windows 10/11 上的轻量局域网远程控制。纯 Go、无 cgo、单
 
 ## 当前状态（2026-10-29）
 
+- **最新一轮（0.9.0）**：画质放大着色器 + Parsec VDD 虚拟显示器（用户选：用 Parsec VDD、内置安装包）。见 `handoff-2026-10-29-virtual-display.md`、`plan-virtual-display.md`，真机验证 H38。线上 `go-nx` **0.9.0**（versionCode 900）；go-nx-core 仍 0.2.1（nx-host 不声明新能力，行为未变，未重发）。
+
 - **最新一轮（端口被占 → 端口可配置）**：用户在 0.7.1 上被拒（"密码错误次数过多"），并确认 minipc 已是开放模式。从 tony-ai-pc-1 探测：minipc 的 tailnet 地址 `100.109.77.29:7000` 回应的是另一个处于严格模式的主机（ID `28AF F5AC A803 77E7`，用户认为是 NightDesk 的 nx-host），公网地址上才是 go-nx（`CFFC C257 D5F1 8299`）——另一个程序单独绑了 tailnet IP，截走了连接。0.7.2：主机检测并警告同端口的其他程序、锁定可关、被拒卡片显示对方 ID（`handoff-2026-10-29-port-shared.md`，H36）。0.8.0：设置 → 网络改端口 / 监听地址（立即生效）、设置页分区、开机启动、Win+L 开关、控制端按 `IP:端口` 记主机身份（`handoff-2026-10-29-settings-network.md`，H37）。**安全**：minipc 的 go-nx 当时是开放模式且公网可达，已提醒用户切回严格或只监听 Tailscale 地址。等用户在 minipc 上把端口改成 7001 后回报。
 
 - **上一轮（配对被拒）**：用户报告 0.7.0 上配对码和密码都被拒（截图："已断开：密码或配对码错误"）。没拿到日志，根因未在真机确认；修了代码里能让正确的码 / 密码被发错或判错的几处（码带空格、重试沿用错密码且无处修改、密码框看不到内容、窗口 2 分钟太短、托盘重复点换码、日志不说原因），见 `docs/handoff-2026-10-28-pairing-refused.md`，真机验证是 `ACCEPTANCE.md` H35。发布为 go-nx 0.7.1 与 go-nx-core 0.2.1（`trust.Policy` 与 nx-host 的日志也变了）。
