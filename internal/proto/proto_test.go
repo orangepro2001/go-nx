@@ -66,3 +66,62 @@ func TestDedupEvictsOldest(t *testing.T) {
 		t.Errorf("cache size = %d, want %d", len(d.m), dedupSize)
 	}
 }
+
+func TestParseFrameHeaderRejectsUnreasonableSizes(t *testing.T) {
+	cases := []struct {
+		name string
+		w, h uint16
+		ok   bool
+	}{
+		{"1080p", 1920, 1080, true},
+		{"8K", 7680, 4320, true},
+		{"widest allowed", MaxFrameDim, 1, true},
+		{"zero width", 0, 1080, false},
+		{"zero height", 1920, 0, false},
+		{"both max uint16", 65535, 65535, false},
+		{"one side over the dimension cap", MaxFrameDim + 1, 1, false},
+		{"area over the pixel cap", 12000, 6000, false},
+	}
+	for _, c := range cases {
+		_, err := ParseFrameHeader(FrameHeader{Seq: 1, W: c.w, H: c.h}.Marshal())
+		if (err == nil) != c.ok {
+			t.Errorf("%s (%dx%d): err = %v, want ok=%v", c.name, c.w, c.h, err, c.ok)
+		}
+		if got := ValidFrameSize(int(c.w), int(c.h)); got != c.ok {
+			t.Errorf("%s: ValidFrameSize = %v, want %v", c.name, got, c.ok)
+		}
+	}
+}
+
+// The fuzz targets below read what a peer controls. They must never panic and
+// must never accept a value outside the documented limits.
+func FuzzReadMsg(f *testing.F) {
+	var buf bytes.Buffer
+	WriteHello(&buf, "pw")
+	WriteAck(&buf, 3)
+	WriteInput(&buf, Input{OpID: 7, Kind: KindMouseMove, X: 5, Y: 6})
+	f.Add(buf.Bytes())
+	f.Add([]byte{})
+	f.Add([]byte{MsgHello, 255})
+	f.Add([]byte{200})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		r := bytes.NewReader(data)
+		for i := 0; i < 64; i++ { // a stream of messages; stop at the first error
+			if _, err := ReadMsg(r); err != nil {
+				return
+			}
+		}
+	})
+}
+
+func FuzzParseFrameHeader(f *testing.F) {
+	f.Add(FrameHeader{Seq: 1, W: 1920, H: 1080}.Marshal())
+	f.Add([]byte{})
+	f.Add(bytes.Repeat([]byte{255}, FrameHeaderSize))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		h, err := ParseFrameHeader(data)
+		if err == nil && !ValidFrameSize(int(h.W), int(h.H)) {
+			t.Fatalf("accepted header %+v outside the limits", h)
+		}
+	})
+}

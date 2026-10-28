@@ -34,6 +34,7 @@
 |---|---|---|---|
 | 传输 | 已实现 | QUIC（quic-go）+ TLS 1.3，ALPN 固定 `"go-nx"`，keep-alive 5s / idle 45s | `internal/remote/tls.go:22,41-42` |
 | 流划分 | 已实现 | 一条双向控制流（Hello/Ack/Input/Receipt）+ 每帧一条主机发起的单向流。**没有** S0/S1/S2/S4 分流 | `internal/proto/proto.go:3-6,18-24` |
+| 对恶意主机的上限 | 已实现（2026-10-28） | 公布的帧尺寸 ≤ 16384 px/边、≤ 2²⁵ 像素，否则结束会话（`proto.ErrFrameSize`）；单个更新流 ≤ 约 138 MiB，超出结束会话；调色板 RLE 展开前校验；raw tile 的 deflate 最多读 size+1 字节；每帧记录数 ≤ tile 数；更新流 15 s 无数据即放弃；主机自己的屏幕超出上限时 `Serve` 直接报错 | `proto.go`（`MaxFrameDim`、`ValidFrameSize`）、`client.go`（`stallReader`）、`tile.go`（`decodePalette`、`Decode`）、`host.go` |
 | 版本/能力协商 | **未实现** | Hello 只有 `type, pwLen, password`；未知消息类型直接结束会话 | `proto.go:18,98-137` |
 | 输入种类 | 已实现 | 鼠标移动/按下/抬起、竖直滚轮、按键按下/抬起（Windows VK，`0x100` 位表示扩展键）。**没有**横向滚轮、X 键、Unicode 文本 | `proto.go:28-33` |
 | opId 与去重 | 已实现 | `u64` opId，主机保留最近 1024 个；opId=0（鼠标移动、按键自动重复）不去重也无回执。**不是** UUID，无 `clientTs` | `proto.go:178`、`host.go:210` |

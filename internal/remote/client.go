@@ -3,9 +3,11 @@ package remote
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/quic-go/quic-go"
 
@@ -14,13 +16,24 @@ import (
 	"go-nx/internal/trust"
 )
 
-const maxFrameBytes = 64 << 20
+// maxFrameBytes bounds one update's stream: the largest frame the protocol allows
+// at four bytes a pixel, plus room for tile headers and deflate framing.
+const maxFrameBytes = proto.MaxFramePixels*4 + 4<<20
+
+// stallTimeout is how long an update's stream may go without delivering a byte
+// before the viewer gives up on it and moves to the next one.
+const stallTimeout = 15 * time.Second
+
+var errFrameTooLarge = errors.New("remote: update exceeds the size limit")
 
 // Client is the controlling side of a session.
 type Client struct {
 	conn *quic.Conn
 	ctrl *quic.Stream
 	wmu  sync.Mutex
+
+	maxFrame int64         // largest update stream accepted, in bytes
+	stall    time.Duration // longest an update stream may go silent
 }
 
 // Dial connects to a host, presenting id and pinning the host's fingerprint in
@@ -46,7 +59,7 @@ func Dial(ctx context.Context, addr string, id tls.Certificate, hosts *trust.Sto
 		conn.CloseWithError(0, "")
 		return nil, err
 	}
-	return &Client{conn: conn, ctrl: ctrl}, nil
+	return &Client{conn: conn, ctrl: ctrl, maxFrame: maxFrameBytes, stall: stallTimeout}, nil
 }
 
 func (c *Client) Close() { c.conn.CloseWithError(0, "") }
@@ -91,11 +104,19 @@ func (c *Client) recvFrames(ctx context.Context, onFrame func(*tile.Frame, []til
 		}
 		// Streams are read one at a time in the order the host opened them, so
 		// updates are applied in order. A cancelled stream fails here and is skipped.
-		data, err := io.ReadAll(io.LimitReader(st, maxFrameBytes))
+		data, err := io.ReadAll(io.LimitReader(stallReader{st, c.stall}, c.maxFrame+1))
 		if err != nil {
+			st.CancelRead(0) // tell the host to stop sending it
 			continue
 		}
+		if int64(len(data)) > c.maxFrame {
+			st.CancelRead(0)
+			return errFrameTooLarge
+		}
 		hdr, err := proto.ParseFrameHeader(data)
+		if errors.Is(err, proto.ErrFrameSize) {
+			return err // a host announcing a buffer we will not allocate is not a host to keep
+		}
 		if err != nil || hdr.Seq <= lastSeq {
 			continue
 		}
@@ -115,4 +136,16 @@ func (c *Client) recvFrames(ctx context.Context, onFrame func(*tile.Frame, []til
 			return err
 		}
 	}
+}
+
+// stallReader sets a fresh read deadline before every read, so a stream that
+// stops delivering is abandoned after d while a slow but steady one is not.
+type stallReader struct {
+	st *quic.ReceiveStream
+	d  time.Duration
+}
+
+func (r stallReader) Read(p []byte) (int, error) {
+	r.st.SetReadDeadline(time.Now().Add(r.d))
+	return r.st.Read(p)
 }

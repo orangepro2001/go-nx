@@ -2,7 +2,9 @@ package tile
 
 import (
 	"bytes"
+	"compress/flate"
 	"math/rand"
+	"runtime"
 	"testing"
 )
 
@@ -116,4 +118,88 @@ func TestDecodeReportsClippedEdgeRect(t *testing.T) {
 	if len(rects) != 1 || rects[0] != (Rect{128, 64, 22, 26}) {
 		t.Fatalf("rects = %+v", rects)
 	}
+}
+
+// A palette tile whose runs add up to more pixels than the tile holds must be
+// refused without first expanding every run.
+func TestDecodeRejectsPaletteRunsPastTile(t *testing.T) {
+	dst := NewFrame(64, 64)
+	payload := []byte{0, 1, 2, 3, 4} // 1 colour
+	for i := 0; i < 1000; i++ {
+		payload = append(payload, 255, 0) // 256 px per pair: 256,000 px for a 4,096 px tile
+	}
+	if _, err := decodePalette(payload, 64*64*bpp); err == nil {
+		t.Fatal("oversized palette runs accepted")
+	}
+	rec := append([]byte{0, 0, 0, 0, typePalette, byte(len(payload)), byte(len(payload) >> 8), 0, 0}, payload...)
+	if _, err := Decode(dst, rec); err == nil {
+		t.Fatal("Decode accepted oversized palette runs")
+	}
+}
+
+// A small deflate stream that expands enormously must not be inflated past the
+// size of the tile it claims to fill.
+func TestDecodeBoundsDeflateBomb(t *testing.T) {
+	var buf bytes.Buffer
+	zw, _ := flate.NewWriter(&buf, flate.BestCompression)
+	zero := make([]byte, 1<<20)
+	for i := 0; i < 16; i++ { // 16 MiB of zeros compresses to a few tens of KiB
+		zw.Write(zero)
+	}
+	zw.Close()
+	if buf.Len() > 1<<20 {
+		t.Fatalf("bomb is %d bytes, expected it to be tiny", buf.Len())
+	}
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	_, err := decodeTile(typeRaw, buf.Bytes(), 64*64*bpp)
+	runtime.ReadMemStats(&after)
+	if err == nil {
+		t.Fatal("deflate bomb accepted")
+	}
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 8<<20 {
+		t.Errorf("decoding a 16 MiB bomb allocated %d MiB, want it bounded by the tile size", grew>>20)
+	}
+}
+
+// The host sends each tile at most once per update, so more records than tiles
+// is a flood.
+func TestDecodeRejectsMoreRecordsThanTiles(t *testing.T) {
+	dst := NewFrame(64, 64) // one tile
+	rec := []byte{0, 0, 0, 0, typeSolid, 4, 0, 0, 0, 1, 2, 3, 255}
+	if _, err := Decode(dst, rec); err != nil {
+		t.Fatalf("one record: %v", err)
+	}
+	if _, err := Decode(dst, append(append([]byte{}, rec...), rec...)); err == nil {
+		t.Fatal("two records for a one-tile frame accepted")
+	}
+}
+
+// FuzzDecode feeds arbitrary bytes to Decode. Whatever a host sends, decoding
+// must return (nil or an error), never panic, and never write outside dst.
+func FuzzDecode(f *testing.F) {
+	src := NewFrame(tw, th)
+	fill(src, 0, 0, tw, th, [4]byte{1, 2, 3, 255})
+	fill(src, 0, 0, 30, 30, [4]byte{200, 100, 50, 255})
+	rand.New(rand.NewSource(1)).Read(src.Pix[(0*src.W+64)*bpp : (0*src.W+128)*bpp])
+	var d Differ
+	seed, err := Encode(src, d.Diff(src))
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(seed)
+	f.Add([]byte{})
+	f.Add([]byte{0, 0, 0, 0, typeSolid, 4, 0, 0, 0, 1, 2, 3, 255})
+	f.Add([]byte{0, 0, 0, 0, typePalette, 5, 0, 0, 0, 0, 1, 2, 3, 4})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		dst := NewFrame(tw, th)
+		rects, _ := Decode(dst, data)
+		for _, r := range rects {
+			if r.X < 0 || r.Y < 0 || r.W <= 0 || r.H <= 0 || r.X+r.W > tw || r.Y+r.H > th {
+				t.Fatalf("rect %+v lies outside the %dx%d frame", r, tw, th)
+			}
+		}
+	})
 }

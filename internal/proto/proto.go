@@ -156,6 +156,22 @@ type FrameHeader struct {
 
 const FrameHeaderSize = 8
 
+// A viewer allocates a frame buffer from the size a host announces, so the
+// announcement is bounded. 8K (7680x4320, 33.2M pixels) fits; anything larger
+// than this is treated as a protocol violation rather than allocated.
+const (
+	MaxFrameDim    = 16384   // pixels along either side
+	MaxFramePixels = 1 << 25 // width * height
+)
+
+// ErrFrameSize is returned for a frame size outside the limits above.
+var ErrFrameSize = errors.New("proto: frame size out of range")
+
+// ValidFrameSize reports whether a w x h frame is within the limits.
+func ValidFrameSize(w, h int) bool {
+	return w > 0 && h > 0 && w <= MaxFrameDim && h <= MaxFrameDim && w*h <= MaxFramePixels
+}
+
 func (h FrameHeader) Marshal() []byte {
 	b := make([]byte, FrameHeaderSize)
 	binary.LittleEndian.PutUint32(b[0:], h.Seq)
@@ -168,11 +184,15 @@ func ParseFrameHeader(b []byte) (FrameHeader, error) {
 	if len(b) < FrameHeaderSize {
 		return FrameHeader{}, errors.New("proto: short frame header")
 	}
-	return FrameHeader{
+	h := FrameHeader{
 		Seq: binary.LittleEndian.Uint32(b[0:]),
 		W:   binary.LittleEndian.Uint16(b[4:]),
 		H:   binary.LittleEndian.Uint16(b[6:]),
-	}, nil
+	}
+	if !ValidFrameSize(int(h.W), int(h.H)) {
+		return FrameHeader{}, ErrFrameSize
+	}
+	return h, nil
 }
 
 const dedupSize = 1024

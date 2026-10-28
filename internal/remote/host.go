@@ -3,6 +3,7 @@ package remote
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -139,6 +140,11 @@ func Serve(ctx context.Context, conn *quic.Conn, src Source, inj Injector, dd *p
 	go func() { readErr <- readControl(ctrl, input, dd, &lastAck) }()
 
 	w, h := src.Size()
+	if !proto.ValidFrameSize(w, h) {
+		// A viewer would refuse the frames, so say so here instead of streaming them.
+		return fmt.Errorf("screen %dx%d is outside what the protocol carries (at most %d px a side, %d px in all)",
+			w, h, proto.MaxFrameDim, proto.MaxFramePixels)
+	}
 	cur := tile.NewFrame(w, h)
 	var diff tile.Differ
 	pending := map[int]struct{}{}

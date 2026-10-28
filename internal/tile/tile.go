@@ -105,7 +105,13 @@ type Rect struct{ X, Y, W, H int }
 // changed, one per tile record.
 func Decode(dst *Frame, data []byte) ([]Rect, error) {
 	var rects []Rect
+	// The sender includes each tile at most once per update, so a longer list is
+	// a flood rather than a screen.
+	maxRecords := dst.Cols() * dst.Rows()
 	for len(data) > 0 {
+		if len(rects) == maxRecords {
+			return nil, errors.New("tile: more records than tiles")
+		}
 		if len(data) < 9 {
 			return nil, errors.New("tile: truncated header")
 		}
@@ -215,31 +221,11 @@ func decodeTile(typ byte, p []byte, size int) ([]byte, error) {
 		}
 		return px, nil
 	case typePalette:
-		if len(p) < 1 {
-			return nil, errors.New("tile: bad palette payload")
-		}
-		n := int(p[0]) + 1
-		if len(p) < 1+n*bpp || (len(p)-1-n*bpp)%2 != 0 {
-			return nil, errors.New("tile: bad palette payload")
-		}
-		pal := p[1 : 1+n*bpp]
-		rle := p[1+n*bpp:]
-		px := make([]byte, 0, size)
-		for i := 0; i < len(rle); i += 2 {
-			k := int(rle[i+1])
-			if k >= n {
-				return nil, errors.New("tile: palette index out of range")
-			}
-			for r := 0; r <= int(rle[i]); r++ {
-				px = append(px, pal[k*bpp:k*bpp+bpp]...)
-			}
-		}
-		if len(px) != size {
-			return nil, errors.New("tile: palette size mismatch")
-		}
-		return px, nil
+		return decodePalette(p, size)
 	case typeRaw:
-		px, err := io.ReadAll(flate.NewReader(bytes.NewReader(p)))
+		// Read at most one byte past the tile so a deflate bomb is refused after
+		// size+1 bytes instead of being inflated whole.
+		px, err := io.ReadAll(io.LimitReader(flate.NewReader(bytes.NewReader(p)), int64(size)+1))
 		if err != nil {
 			return nil, err
 		}
@@ -249,4 +235,37 @@ func decodeTile(typ byte, p []byte, size int) ([]byte, error) {
 		return px, nil
 	}
 	return nil, errors.New("tile: unknown type")
+}
+
+// decodePalette expands palette + RLE pixels into exactly size bytes. Runs are
+// checked against the tile before they are expanded, so a hostile payload
+// cannot make this allocate more than size.
+func decodePalette(p []byte, size int) ([]byte, error) {
+	if len(p) < 1 {
+		return nil, errors.New("tile: bad palette payload")
+	}
+	n := int(p[0]) + 1
+	if len(p) < 1+n*bpp || (len(p)-1-n*bpp)%2 != 0 {
+		return nil, errors.New("tile: bad palette payload")
+	}
+	pal := p[1 : 1+n*bpp]
+	rle := p[1+n*bpp:]
+	px := make([]byte, 0, size)
+	for i := 0; i < len(rle); i += 2 {
+		k := int(rle[i+1])
+		if k >= n {
+			return nil, errors.New("tile: palette index out of range")
+		}
+		run := int(rle[i]) + 1
+		if len(px)+run*bpp > size {
+			return nil, errors.New("tile: palette runs exceed the tile")
+		}
+		for r := 0; r < run; r++ {
+			px = append(px, pal[k*bpp:k*bpp+bpp]...)
+		}
+	}
+	if len(px) != size {
+		return nil, errors.New("tile: palette size mismatch")
+	}
+	return px, nil
 }
