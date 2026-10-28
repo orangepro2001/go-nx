@@ -46,8 +46,10 @@ func (h *hostState) fail(err error) {
 	h.mu.Unlock()
 }
 
+// startPairing opens a pairing window with a fresh six-digit code, which the
+// home tab shows and the new device enters as its password.
 func (h *hostState) startPairing() {
-	h.policy.StartPairing(pairingWindow)
+	h.policy.OpenPairing(trust.NewPairingCode(), pairingWindow)
 	h.mu.Lock()
 	h.Rejected = ""
 	h.mu.Unlock()
@@ -72,7 +74,7 @@ func (h *hostState) info() ui.HostInfo {
 	defer h.mu.Unlock()
 	return ui.HostInfo{
 		Err: h.Err, Addrs: h.Addrs, Port: h.Port, Paired: h.policy.TrustedCount(), ID: h.ID,
-		Controller: h.Controller, Rejected: h.Rejected, PairingLeft: h.policy.PairingLeft(),
+		Controller: h.Controller, Rejected: h.Rejected, PairingLeft: h.policy.PairingLeft(), PairingCode: h.policy.PairingCode(),
 		RequireAuth: h.requireAuth(),
 	}
 }
@@ -80,10 +82,13 @@ func (h *hostState) info() ui.HostInfo {
 func (h *hostState) pairingLeft() time.Duration { return h.policy.PairingLeft() }
 func (h *hostState) trustedCount() int          { return h.policy.TrustedCount() }
 
-// requireAuth reports whether pairing/password checks are on. Default: off.
+// requireAuthDefault is what a host that never chose gets: pairing or a password
+// is required. A saved "0" or "1" from the settings screen always wins.
+const requireAuthDefault = true
+
+// requireAuth reports whether pairing/password checks are on.
 func (h *hostState) requireAuth() bool {
-	v, _ := h.settings.Get("require_auth")
-	return v == "1"
+	return h.settings.Bool("require_auth", requireAuthDefault)
 }
 
 func (h *hostState) setRequireAuth(on bool) {

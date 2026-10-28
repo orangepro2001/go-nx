@@ -474,3 +474,70 @@ func TestForgetHostLetsAChangedHostBePinnedAgain(t *testing.T) {
 		t.Fatalf("pinned %q, want host B's fingerprint", got)
 	}
 }
+
+// The whole pairing story over real connections: a stranger is turned away, the
+// right code pairs it once, and from then on it connects with no password.
+func TestPairingCodeEndToEnd(t *testing.T) {
+	store, err := trust.OpenStore(filepath.Join(t.TempDir(), "trusted.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := trust.NewPolicy(store)
+	policy.SetRequireAuth(true)
+	policy.OpenPairing("123456", time.Minute)
+	opt := Options{Check: policy.Check}
+
+	viewerID, hostID := identity(t), identity(t)
+	hosts := hostsStore(t)
+
+	dial := func(password string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ln, err := Listen("127.0.0.1:0", hostID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ln.Close()
+		served := make(chan error, 1)
+		go func() {
+			conn, err := ln.Accept(ctx)
+			if err != nil {
+				served <- err
+				return
+			}
+			served <- Serve(ctx, conn, newFakeSource(64, 64), &fakeInjector{}, proto.NewDedup(), opt)
+		}()
+		c, err := Dial(ctx, ln.Addr().String(), viewerID, hosts, password)
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+		select {
+		case err := <-served:
+			if errors.Is(err, ErrDenied) {
+				return err
+			}
+		case <-time.After(300 * time.Millisecond): // still serving: the host let it in
+		}
+		return nil
+	}
+
+	if err := dial(""); !errors.Is(err, ErrDenied) {
+		t.Fatalf("no code: %v, want the host to refuse", err)
+	}
+	if err := dial("000000"); !errors.Is(err, ErrDenied) {
+		t.Fatalf("wrong code: %v, want the host to refuse", err)
+	}
+	if store.Len() != 0 {
+		t.Fatal("a device was paired without the code")
+	}
+	if err := dial("123456"); err != nil {
+		t.Fatalf("right code: %v", err)
+	}
+	if store.Len() != 1 {
+		t.Fatalf("paired devices = %d, want 1", store.Len())
+	}
+	if err := dial(""); err != nil {
+		t.Fatalf("paired device with no password: %v", err)
+	}
+}

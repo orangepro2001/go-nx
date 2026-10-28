@@ -1,7 +1,10 @@
 package trust
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
+	"fmt"
+	"math/big"
 	"net"
 	"sync"
 	"time"
@@ -25,6 +28,11 @@ const (
 	maxLockout  = 15 * time.Minute // ...up to this
 	failWindow  = 10 * time.Minute // failures older than this are forgotten
 	maxSources  = 1024             // sources tracked at once; the table never grows past this
+
+	// maxPairFails is how many wrong pairing codes, from anyone, close an open
+	// pairing window. A 6-digit code survives that many guesses with odds of
+	// better than 99.998%.
+	maxPairFails = 10
 )
 
 // source is what the policy remembers about one address that guessed wrong.
@@ -49,6 +57,8 @@ type Policy struct {
 	requireAuth bool
 	password    string
 	pairUntil   time.Time
+	pairCode    string             // if set, the code a new device must enter to pair
+	pairFails   int                // wrong codes since the window opened
 	sources     map[string]*source // by host part of the address, for password attempts
 	now         func() time.Time
 }
@@ -70,10 +80,52 @@ func (p *Policy) SetPassword(pw string) {
 	p.mu.Unlock()
 }
 
-func (p *Policy) StartPairing(d time.Duration) {
+// StartPairing opens a pairing window in which the next new device is paired
+// and allowed, with no code to enter.
+func (p *Policy) StartPairing(d time.Duration) { p.OpenPairing("", d) }
+
+// OpenPairing opens pairing for d. With a non-empty code, a new device is paired
+// only if it offers that code as its password, once: the window closes when it
+// is used, and after maxPairFails wrong codes. With an empty code the next new
+// device is paired.
+func (p *Policy) OpenPairing(code string, d time.Duration) {
 	p.mu.Lock()
 	p.pairUntil = p.now().Add(d)
+	p.pairCode = code
+	p.pairFails = 0
 	p.mu.Unlock()
+}
+
+// ClosePairing ends the pairing window at once.
+func (p *Policy) ClosePairing() {
+	p.mu.Lock()
+	p.closePairingLocked()
+	p.mu.Unlock()
+}
+
+func (p *Policy) closePairingLocked() {
+	p.pairUntil = time.Time{}
+	p.pairCode = ""
+	p.pairFails = 0
+}
+
+// PairingCode is the code of the open pairing window, or "" if there is none.
+func (p *Policy) PairingCode() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.now().Before(p.pairUntil) {
+		return p.pairCode
+	}
+	return ""
+}
+
+// NewPairingCode returns a random six-digit code.
+func NewPairingCode() string {
+	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil {
+		panic("trust: no randomness: " + err.Error()) // the OS random source failing is not recoverable
+	}
+	return fmt.Sprintf("%06d", n.Int64())
 }
 
 // PairingLeft is how long pairing stays open; zero if closed.
@@ -93,7 +145,8 @@ func (p *Policy) Revoke(fp string) error { return p.trusted.Delete(fp) }
 func (p *Policy) RevokeAll() (int, error) { return p.trusted.Clear() }
 
 // Check decides about a viewer with certificate fingerprint fp from addr, which
-// offered password (possibly empty).
+// offered password (possibly empty). While a coded pairing window is open the
+// password is also how a new device offers the pairing code.
 func (p *Policy) Check(fp, addr, password string) (Verdict, error) {
 	p.mu.Lock()
 	open := !p.requireAuth
@@ -105,24 +158,46 @@ func (p *Policy) Check(fp, addr, password string) (Verdict, error) {
 		return Allowed, nil
 	}
 	p.mu.Lock()
-	if p.now().Before(p.pairUntil) {
-		p.pairUntil = time.Time{} // one device per pairing
-		p.mu.Unlock()
+	verdict, pair := p.decideLocked(addr, password)
+	p.mu.Unlock()
+	if pair {
 		// Failing to save only costs the user another pairing next time.
-		return Allowed, p.trusted.Set(fp, addr+" "+p.now().Format("2006-01-02 15:04"))
+		return verdict, p.trusted.Set(fp, addr+" "+p.now().Format("2006-01-02 15:04"))
 	}
-	defer p.mu.Unlock()
-	if password == "" || p.password == "" {
-		return Untrusted, nil
+	return verdict, nil
+}
+
+// decideLocked handles a device that is not paired. pair is true when the device
+// should now be added to the paired set. Callers hold p.mu.
+func (p *Policy) decideLocked(addr, password string) (v Verdict, pair bool) {
+	now := p.now()
+	pairing := now.Before(p.pairUntil)
+	coded := pairing && p.pairCode != ""
+	if pairing && !coded {
+		p.closePairingLocked() // one device per pairing
+		return Allowed, true
 	}
-	now, key := p.now(), sourceKey(addr)
+	if password == "" || (p.password == "" && !coded) {
+		return Untrusted, false // nothing offered, or nothing it could match
+	}
+	key := sourceKey(addr)
 	src := p.sources[key]
 	if src != nil && now.Before(src.lockedUntil) {
-		return Locked, nil
+		return Locked, false
 	}
-	if subtle.ConstantTimeCompare([]byte(password), []byte(p.password)) == 1 {
+	if coded && subtle.ConstantTimeCompare([]byte(password), []byte(p.pairCode)) == 1 {
+		p.closePairingLocked()
 		delete(p.sources, key)
-		return Allowed, nil
+		return Allowed, true
+	}
+	if p.password != "" && subtle.ConstantTimeCompare([]byte(password), []byte(p.password)) == 1 {
+		delete(p.sources, key)
+		return Allowed, false
+	}
+	if coded {
+		if p.pairFails++; p.pairFails >= maxPairFails {
+			p.closePairingLocked()
+		}
 	}
 	if src == nil {
 		p.makeRoom(now)
@@ -143,7 +218,7 @@ func (p *Policy) Check(fp, addr, password string) (Verdict, error) {
 		d := lockout << min(src.strikes-1, 10)
 		src.lockedUntil = now.Add(min(d, maxLockout))
 	}
-	return BadPassword, nil
+	return BadPassword, false
 }
 
 // sourceKey is the part of addr that identifies a PC: its IP, not the port,

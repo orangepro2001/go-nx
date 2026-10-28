@@ -47,9 +47,9 @@
 
 | 项 | 状态 | 实际情况 | 位置 |
 |---|---|---|---|
-| 认证默认值 | **默认关闭** | `require_auth` 仅当设置值为 `"1"` 才开；关闭时任何能连到端口的人都被允许 | `cmd/go-nx/host_windows.go:72`、`internal/trust/policy.go:35,77` |
+| 认证默认值 | **默认开启**（2026-10-28 改；此前默认关闭） | `settings.json` 里从没设置过 `require_auth` 的主机现在要求配对或密码；设置过 `"0"`/`"1"` 的保持原值（`trust.Store.Bool`）。关闭时（界面会警告）任何能连到端口的人都被允许。**这是行为变更**：升级后未配对的控制端会被拒绝，需要先配对 | `cmd/go-nx/host_windows.go`（`requireAuthDefault`）、`internal/trust` |
 | 证书/指纹 | 已实现 | 自签证书；客户端 TOFU 固定主机指纹，变化则 `ErrHostChanged` 硬失败；服务端要求任意客户端证书，信任由 `Policy` 决定 | `tls.go:57,72-91` |
-| 配对 | 部分 | 主机上点按钮开 2 分钟窗口，**下一台**连入设备被信任。**没有** 6 位码、没有指纹核对、没有本机确认弹窗 | `policy.go:86-90`、`host_windows.go:25` |
+| 配对 | 部分（2026-10-28 改） | 主机上点按钮开 2 分钟窗口并显示**一次性 6 位码**；新设备把它填在 Password 里才配对，成功即关窗，全体来源累计错 10 次也关窗。无码模式（`StartPairing`）保留给不经界面的流程。**仍没有** 指纹核对、本机确认弹窗 | `internal/trust/policy.go`（`OpenPairing`、`NewPairingCode`）、`cmd/go-nx/host_windows.go`、`internal/ui/home.go` |
 | 密码 | 部分 | 可选。错误次数**按来源 IP** 计（端口不算）：10 分钟内错 5 次锁该来源 1 分钟，连续锁定每次加倍，上限 15 分钟；安静 10 分钟后失败计数清零；输对一次清除该来源的记录；来源表上限 1024 条。配对过的设备不受影响。（2026-10-28 改；此前是全局 1 分钟/5 次、不衰减） | `internal/trust/policy.go` |
 | 未认证连接上限 | 已实现（2026-10-28） | `remote.Gate`：等待认证的连接总数 ≤ 16、同一 IP ≤ 4，超出的以 `CloseBusy`(6) 拒绝；Hello 10 s 内未到也会放弃。QUIC 握手本身的并发未限制 | `internal/remote/gate.go`、`host.go`、`cmd/go-nx/host_windows.go` |
 | 首次连接 | 风险 | 密码在校验主机指纹之前就发出（TOFU 首次） | `internal/remote/client.go:45` |

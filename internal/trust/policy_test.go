@@ -228,3 +228,96 @@ func TestCorrectPasswordClearsThatSourcesFailures(t *testing.T) {
 	}
 	checkFrom(t, p, "10.0.0.66:1", "s3cret", Allowed)
 }
+
+func TestPairingCodePairsOnlyTheDeviceThatEntersIt(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.OpenPairing("123456", time.Minute)
+	check(t, p, "aa", "", Untrusted)         // no code: not paired, and does not use up the window
+	check(t, p, "aa", "654321", BadPassword) // wrong code
+	if p.TrustedCount() != 0 {
+		t.Fatal("a device was paired without the right code")
+	}
+	check(t, p, "aa", "123456", Allowed)
+	if p.TrustedCount() != 1 {
+		t.Fatalf("TrustedCount = %d after pairing, want 1", p.TrustedCount())
+	}
+	check(t, p, "aa", "", Allowed) // paired devices need nothing from now on
+	// The code works once: the window closed when it was used.
+	check(t, p, "bb", "123456", Untrusted)
+	if p.PairingLeft() != 0 {
+		t.Errorf("PairingLeft = %v after a successful pairing", p.PairingLeft())
+	}
+}
+
+func TestPairingWithoutCodeStillAcceptsTheNextDevice(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.StartPairing(time.Minute)
+	check(t, p, "aa", "", Allowed)
+	check(t, p, "bb", "", Untrusted)
+}
+
+func TestPairingClosesAfterTooManyWrongCodes(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.OpenPairing("123456", time.Minute)
+	// Different sources, so the per-source lockout is not what stops this.
+	for i := 0; i < maxPairFails; i++ {
+		checkFrom(t, p, net.JoinHostPort(fmt.Sprintf("10.0.1.%d", i+1), "1"), "000000", BadPassword)
+	}
+	if p.PairingLeft() != 0 {
+		t.Fatal("pairing is still open after the wrong-code limit")
+	}
+	checkFrom(t, p, "10.0.2.1:1", "123456", Untrusted) // the right code is too late
+	if p.TrustedCount() != 0 {
+		t.Fatal("a device was paired after pairing closed")
+	}
+}
+
+func TestWrongPairingCodesFromOneSourceAreLockedOut(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.OpenPairing("123456", time.Minute)
+	for i := 0; i < maxFailures-1; i++ {
+		checkFrom(t, p, "10.0.0.66:1", "000000", BadPassword)
+	}
+	// Still open (fewer wrong codes than the window allows), but this source is on its last try.
+	checkFrom(t, p, "10.0.0.66:1", "000000", BadPassword)
+	checkFrom(t, p, "10.0.0.66:1", "123456", Locked)
+}
+
+func TestClosePairingEndsTheWindow(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.OpenPairing("123456", time.Minute)
+	p.ClosePairing()
+	checkFrom(t, p, "10.0.0.1:1", "123456", Untrusted)
+	if p.PairingCode() != "" || p.PairingLeft() != 0 {
+		t.Errorf("code %q / left %v after ClosePairing", p.PairingCode(), p.PairingLeft())
+	}
+}
+
+func TestHostPasswordStillWorksWhilePairingIsOpen(t *testing.T) {
+	p, _ := newPolicy(t)
+	p.SetPassword("s3cret")
+	p.OpenPairing("123456", time.Minute)
+	checkFrom(t, p, "10.0.0.1:1", "s3cret", Allowed)
+	if p.TrustedCount() != 0 {
+		t.Fatal("logging in with the host password must not pair the device")
+	}
+}
+
+func TestNewPairingCodeIsSixDigits(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 50; i++ {
+		c := NewPairingCode()
+		if len(c) != 6 {
+			t.Fatalf("code %q is not 6 characters", c)
+		}
+		for _, r := range c {
+			if r < '0' || r > '9' {
+				t.Fatalf("code %q has a non-digit", c)
+			}
+		}
+		seen[c] = true
+	}
+	if len(seen) < 40 {
+		t.Errorf("only %d distinct codes in 50 draws", len(seen))
+	}
+}

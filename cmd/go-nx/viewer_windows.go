@@ -294,9 +294,9 @@ func describe(err error) string {
 	if errors.As(err, &ae) {
 		switch ae.ErrorCode {
 		case remote.CloseUntrusted:
-			return "This PC is not paired with the host. Enter the host's password, or on the host click \"Pair new device\" and connect again"
+			return "This PC is not paired with the host. On the host click \"Pair new device\", then connect again with the 6-digit code it shows as the Password (or enter the host's password)"
 		case remote.CloseBadPassword:
-			return "Wrong password"
+			return "Wrong password or pairing code"
 		case remote.CloseLocked:
 			return "Too many wrong passwords; try again in a minute"
 		case remote.CloseReplaced:

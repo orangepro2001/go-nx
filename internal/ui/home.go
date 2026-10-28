@@ -42,6 +42,15 @@ const (
 	rowsShown = (HomeH - listTop - 30) / rowH
 )
 
+// SpacedCode writes a six-digit code as "123 456" so it is easy to read out and
+// type; any other string is returned as it is.
+func SpacedCode(c string) string {
+	if len(c) == 6 {
+		return c[:3] + " " + c[3:]
+	}
+	return c
+}
+
 // Fields on the home tab, in tab order.
 const (
 	FHostPw = iota // this PC's optional password
@@ -138,6 +147,7 @@ type HostInfo struct {
 	Controller  string
 	Rejected    string
 	PairingLeft time.Duration
+	PairingCode string // the code a new device enters as its password; "" when pairing is closed
 	RequireAuth bool
 }
 
@@ -184,8 +194,8 @@ func DrawHome(dst *ebiten.Image, face *text.GoTextFace, d *HomeData, oy int) {
 		case h.Controller != "":
 			t("Being controlled by "+h.Controller, leftX, 122, ColWarn)
 		case h.PairingLeft > 0:
-			t(fmt.Sprintf("Pairing open: %d:%02d - connect from the new device now",
-				int(h.PairingLeft.Minutes()), int(h.PairingLeft.Seconds())%60), leftX, 122, ColWarn)
+			t(Truncate(face, fmt.Sprintf("Pairing open %d:%02d - code %s: enter it as the Password on the new device",
+				int(h.PairingLeft.Minutes()), int(h.PairingLeft.Seconds())%60, SpacedCode(h.PairingCode)), 630), leftX, 122, ColWarn)
 		case h.Rejected != "":
 			t(Truncate(face, "Refused "+h.Rejected, 630), leftX, 122, ColWarn)
 		default:

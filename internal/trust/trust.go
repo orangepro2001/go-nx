@@ -122,6 +122,17 @@ func (s *Store) Get(key string) (string, bool) {
 	return v, ok
 }
 
+// Bool reads a flag stored as "1" or "0". A key that was never set gives def,
+// so a new default reaches installs that never touched the setting while an
+// explicit choice is kept; any other stored value counts as false.
+func (s *Store) Bool(key string, def bool) bool {
+	v, ok := s.Get(key)
+	if !ok {
+		return def
+	}
+	return v == "1"
+}
+
 func (s *Store) Len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

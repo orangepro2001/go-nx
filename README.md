@@ -11,7 +11,7 @@ Windows 10/11 之间的轻量局域网远程查看与操作。纯 Go，无 cgo�
 
 这是早期版本（见 `VERSION`）。**以下是当前真实状态，不是目标：**
 
-- **认证默认关闭**：开启前任何能连到 UDP 7000 的人都能控制这台机器。请在主页勾选 "Require pairing or password"，只在可信网络里使用。
+- **认证默认开启**：新设备要先配对（主机点 "Pair new device"，在新设备的 Password 里填主机显示的 6 位码）或输入主机密码。若在主页取消勾选 "Require pairing or password"，任何能连到 UDP 7000 的人都能控制这台机器。配对时**没有**核对主机指纹，请只在可信网络里使用。
 - 密码和身份私钥以**明文**存在 `%AppData%\go-nx\`。
 - 只采**主屏**；远端画面里**看不到鼠标指针**；分辨率或显示器变化后需重启主机。
 - 没有音频、剪贴板、文件传输、多显示器、协议版本协商。
@@ -35,7 +35,7 @@ go test -race -cover ./...  # 核心包在 Linux 上即可测试；cmd/go-nx、c
 go-nx.exe [-connect host:port] [-port 7000] [-fps 10] [-hidden] [-no-update]
 ```
 
-- 被控端：启动即在监听；开启 "Require pairing or password" 后，点 "Pair new device (2 min)" 开 2 分钟配对窗口，下一台连入的设备被信任。
+- 被控端：启动即在监听。点 "Pair new device (2 min)" 开 2 分钟配对窗口，页面会显示一次性 6 位码；新设备连接时把它填在 Password 里，成功后窗口即关闭，之后该设备不用密码。"Forget paired devices" 清空配对（点两次确认）。
 - 控制端：主页填 `IP:端口` 后点 "Connect"（回车切换字段，最后一个字段回车即连接）；`F3` 看日志；`Ctrl+Alt` 组合键用于标签页操作，细节见界面提示。
 - 配置、身份、信任列表、日志都在 `%AppData%\go-nx\`（日志 `go-nx.log`）。单实例（命名互斥量 `Local\go-nx-single-instance`）。
 

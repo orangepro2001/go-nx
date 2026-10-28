@@ -135,3 +135,11 @@ func TestHostErrorFitsAboveCheckbox(t *testing.T) {
 		t.Fatalf("the message needs %d lines; only 3 fit above the checkbox", n)
 	}
 }
+
+func TestSpacedCode(t *testing.T) {
+	for in, want := range map[string]string{"123456": "123 456", "000007": "000 007", "": "", "12345": "12345"} {
+		if got := SpacedCode(in); got != want {
+			t.Errorf("SpacedCode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

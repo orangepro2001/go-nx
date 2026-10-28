@@ -127,3 +127,22 @@ func TestStoreDeleteAndClearPersist(t *testing.T) {
 		t.Fatalf("Clear on empty = %d, %v", n, err)
 	}
 }
+
+func TestStoreBoolUsesDefaultOnlyWhenUnset(t *testing.T) {
+	s, _ := OpenStore(filepath.Join(t.TempDir(), "s.json"))
+	if !s.Bool("flag", true) || s.Bool("flag", false) {
+		t.Fatal("an unset key must give the default")
+	}
+	s.Set("flag", "0")
+	if s.Bool("flag", true) {
+		t.Fatal("an explicit 0 must win over a true default")
+	}
+	s.Set("flag", "1")
+	if !s.Bool("flag", false) {
+		t.Fatal("an explicit 1 must win over a false default")
+	}
+	s.Set("flag", "garbage")
+	if s.Bool("flag", true) {
+		t.Fatal("an unrecognised value is not 1, so it is false")
+	}
+}
