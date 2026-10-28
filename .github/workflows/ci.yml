@@ -1,0 +1,96 @@
+# CI for go-nx. Nothing here publishes, tags or releases: shipping stays with release.sh.
+#
+#   linux    formatting, vet (also for windows), tests with the race detector, and a build of
+#            the portable core for other platforms
+#   windows  builds and tests on a real Windows runner. The "real desktop" step paints on the
+#            runner's desktop and moves its cursor (GO_NX_WINDOWS_E2E=1); it never runs by
+#            default on a developer machine. See docs/ACCEPTANCE.md for what these do and
+#            do not prove.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags-ignore: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # Ebiten links against X11/GL when it is built on Linux (internal/ui).
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1-mesa-dev libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: vet
+        run: |
+          go vet ./...
+          GOOS=windows go vet ./...
+
+      - name: test (race, coverage)
+        run: go test -race -cover ./...
+
+      # The protocol/session core must stay free of UI and Windows-only imports.
+      - name: portable core builds elsewhere
+        run: |
+          for target in linux/amd64 darwin/arm64 windows/amd64 android/arm64; do
+            echo "== $target"
+            GOOS=${target%/*} GOARCH=${target#*/} go build \
+              ./internal/proto ./internal/tile ./internal/trust ./internal/remote
+          done
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      - name: unit tests
+        run: go test -count=1 ./...
+
+      # Spike (see docs/ACCEPTANCE.md): does a hosted runner have a desktop that GDI can
+      # capture and SendInput can drive? Non-blocking until the first runs answer that.
+      - name: real desktop smoke (capture, inject)
+        continue-on-error: true
+        env:
+          GO_NX_WINDOWS_E2E: "1"
+        run: go test -count=1 -v ./internal/capture ./internal/inject
