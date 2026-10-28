@@ -76,8 +76,8 @@ func (codecV0) readClientMsg(r io.Reader) (proto.Msg, error) { return proto.Read
 func (codecV0) writeReceipt(w io.Writer, opID uint64, status byte) error {
 	return proto.WriteReceipt(w, opID, status)
 }
-func (codecV0) writeWelcome(io.Writer, proto.WelcomeV1) error  { return nil }
-func (codecV0) writeViewSize(io.Writer, uint16, uint16) error  { return ErrUnsupported }
+func (codecV0) writeWelcome(io.Writer, proto.WelcomeV1) error { return nil }
+func (codecV0) writeViewSize(io.Writer, uint16, uint16) error { return ErrUnsupported }
 func (codecV0) writeDisplayState(io.Writer, proto.DisplayState) error {
 	return nil // a v0 viewer never asks for a virtual display
 }
@@ -107,4 +107,4 @@ func (codecV1) writeViewSize(w io.Writer, width, height uint16) error {
 func (codecV1) writeDisplayState(w io.Writer, st proto.DisplayState) error {
 	return proto.WriteDisplayStateV1(w, st)
 }
-func (codecV1) readHostMsg(r io.Reader) (proto.HostMsg, error)    { return proto.ReadHostMsgV1(r) }
+func (codecV1) readHostMsg(r io.Reader) (proto.HostMsg, error) { return proto.ReadHostMsgV1(r) }
